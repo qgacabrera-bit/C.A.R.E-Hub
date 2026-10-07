@@ -9,8 +9,12 @@ export const config = {
   dbPath: process.env.CARE_DB_PATH || path.join(root, 'data', 'care-hub.db'),
   publicDir: path.join(root, 'public'),
 
-  // Counselor portal passcode. Demo default only - set ADMIN_PASSCODE in any shared deployment.
+  isProduction: process.env.NODE_ENV === 'production',
+  trustProxy: Number(process.env.TRUST_PROXY || 0),
+
+  // Counselor portal passcode. Demo default only - production refuses to start without a real one.
   adminPasscode: process.env.ADMIN_PASSCODE || 'counselor-demo',
+  usingDemoPasscode: !process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSCODE === 'counselor-demo' || process.env.ADMIN_PASSCODE.length < 12,
 
   // Claude integration. "auto" uses Claude when credentials are present and falls back to the
   // deterministic engine otherwise; "off" forces the offline engine (useful for demos/tests).

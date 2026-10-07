@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          CARE_LLM: 'off'
+      - name: Smoke-test the server
+        env:
+          CARE_LLM: 'off'
+          PORT: '3000'
+          CARE_DB_PATH: ${{ runner.temp }}/ci.db
+        run: |
+          node server.js &
+          for i in $(seq 1 30); do curl -sf localhost:3000/healthz && break; sleep 1; done
+          curl -sf localhost:3000/api/feed | grep -q '"posts"'
+          curl -sf localhost:3000/ | grep -q 'C.A.R.E. Hub'

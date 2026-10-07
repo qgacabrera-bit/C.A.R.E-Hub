@@ -12,7 +12,8 @@ export function rateLimit({ windowMs, max, message }) {
   }, windowMs).unref();
 
   return (req, res, next) => {
-    const key = crypto.createHmac('sha256', SALT).update(String(req.socket.remoteAddress)).digest('hex');
+    // req.ip honours TRUST_PROXY, so each visitor behind a hosting proxy gets their own bucket.
+    const key = crypto.createHmac('sha256', SALT).update(String(req.ip)).digest('hex');
     const now = Date.now();
     const entry = hits.get(key);
     if (!entry || entry.reset <= now) {

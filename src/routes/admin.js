@@ -39,6 +39,9 @@ const parse = (json) => {
 export function adminRouter(db) {
   const r = express.Router();
 
+  // Lets the login page show the demo hint only when the demo passcode is actually in use.
+  r.get('/config', (_req, res) => res.json({ demo_passcode: config.usingDemoPasscode }));
+
   r.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many sign-in attempts. Try again later.' }), (req, res, next) => {
     if (!safeEqual(req.body?.passcode ?? '', config.adminPasscode)) return next(new UserError('Incorrect passcode.', 401));
     const token = crypto.randomBytes(32).toString('hex');

@@ -218,4 +218,5 @@ async function load() {
   }
 }
 
+api('/api/admin/config').then((c) => { $('#demo-hint').hidden = !c.demo_passcode; }).catch(() => {});
 load();

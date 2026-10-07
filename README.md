@@ -1,4 +1,7 @@
 # C.A.R.E. Hub
+
+[![CI](https://github.com/qgacabrera-bit/C.A.R.E-Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/qgacabrera-bit/C.A.R.E-Hub/actions/workflows/ci.yml)
+
 **Campus Anonymous Reporting & Escalation Hub**: a privacy-first platform where students anonymously share experiences, report incidents, and get support. Recurring patterns are surfaced to counselors without exposing anyone's identity.
 
 > Demo build. All data is **synthetic**. Never load real student data, real IDs, or genuine complaints.
@@ -7,6 +10,7 @@
 
 ```bash
 npm install
+cp .env.example .env # optional - npm start loads .env automatically
 npm start            # http://localhost:3000  (seeds synthetic demo data on first run)
 npm test             # pipeline + guardrail tests
 npm run seed         # wipe and reload the synthetic dataset
@@ -23,12 +27,37 @@ Set `ANTHROPIC_API_KEY` to have Claude (`claude-opus-5-5`) review sanitization, 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
-| `ADMIN_PASSCODE` | `counselor-demo` | Counselor portal passcode. **Change it for any shared deployment** |
+| `ADMIN_PASSCODE` | `counselor-demo` | Counselor portal passcode. **Required (12+ chars) when `NODE_ENV=production`**; the server refuses to start otherwise |
+| `NODE_ENV` | – | `production` enables the passcode guard and hides the demo-passcode hint |
+| `TRUST_PROXY` | `0` | Set to `1` behind a hosting proxy so rate limits apply per visitor |
 | `CARE_LLM` | `auto` | `auto` uses Claude if credentials exist; `off` forces offline |
 | `ANTHROPIC_API_KEY` | – | Enables Claude features |
 | `RETAIN_RAW_CONTENT` | `false` | Raw narratives are purged after sanitization unless `true` |
 | `CARE_DB_PATH` | `data/care-hub.db` | SQLite file |
 | `CARE_SEED` | `true` | `false` skips auto-seeding an empty DB |
+
+## Deploying
+
+GitHub hosts the code. **GitHub Pages can't run this app**: it serves static files only, and C.A.R.E. Hub needs its Node server and SQLite database. Pushing to `main` runs the tests and a server smoke test on Node 22 and 24 in GitHub Actions (`.github/workflows/ci.yml`).
+
+To put it online, deploy the repository to any Node or Docker host (Render, Railway, Fly.io, a VPS):
+
+| Setting | Value |
+|---|---|
+| Build / install | `npm ci` (or use the included `Dockerfile`) |
+| Start | `npm start` |
+| Health check | `GET /healthz` |
+| Env (required) | `NODE_ENV=production`, `ADMIN_PASSCODE=<12+ chars>`, `TRUST_PROXY=1` |
+| Env (optional) | `ANTHROPIC_API_KEY`, `CARE_LLM` |
+| Storage | Mount a **persistent disk** and point `CARE_DB_PATH` at it (Docker: `/app/data`). Without one, reports are lost on every redeploy |
+
+```bash
+docker build -t care-hub .
+docker run -p 3000:3000 -v care-data:/app/data \
+  -e ADMIN_PASSCODE='a-long-private-passcode' -e TRUST_PROXY=1 care-hub
+```
+
+Before any pilot with real students, also work through the review list below. Change the placeholder campus contacts, replace the shared passcode with real sign-in, and get your school's sign-off on data handling.
 
 ## Architecture
 
@@ -81,5 +110,5 @@ Student browser ──► POST /api/posts
 * **Counselor portal actions.** Report content is read-only. Counselors can only move a cluster through `active → reviewing → resolved` (shown to authors as follow-ups) and approve or withhold held posts. This adds a `withheld` post status beyond the spec's three.
 * **Author removal.** Students can remove their own posts, except high-priority ones, which stay with counselors for safety.
 * **Campus contacts** in `src/config.js` marked "demo placeholder" must be replaced with real numbers.
-* **Admin auth** is a single shared passcode with in-memory sessions, which is fine for a demo. Use real SSO for production.
+* **Admin auth** is a single shared passcode with in-memory sessions (sessions reset on restart), which is fine for a demo. Use real SSO for production.
 * **Offline name detection** is heuristic (capitalized spans plus a first-name list). Uncertain cases are held for moderation rather than published. Claude review catches more, especially nicknames.
