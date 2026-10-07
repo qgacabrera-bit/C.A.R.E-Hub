@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Counselor Triage Portal</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/admin">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span><span class="brand-name">Counselor Triage Portal</span><span class="brand-sub">C.A.R.E. Hub · student welfare services</span></span>
+      </a>
+      <div class="tabs">
+        <a class="helpline-pill" href="tel:911" aria-label="Call emergency 911">Emergency 911</a>
+        <a class="helpline-pill" href="tel:1553" aria-label="Call NCMH crisis helpline 1553">Helpline 1553</a>
+        <a class="btn btn-sm" href="/">Student view</a>
+        <button class="btn btn-sm" type="button" id="refresh" hidden>Refresh</button>
+        <button class="btn btn-sm" type="button" id="logout" hidden>Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <section id="login" class="login card stack">
+      <h1>Counselor sign-in</h1>
+      <p class="small muted">Demo passcode: <code>counselor-demo</code> (set <code>ADMIN_PASSCODE</code> for any real deployment).</p>
+      <form id="login-form" class="stack">
+        <div>
+          <label class="field" for="passcode">Passcode</label>
+          <input id="passcode" type="password" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="alert alert-error" role="alert" hidden></div>
+        <button class="btn btn-primary" type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <p class="demo-note">All records are synthetic demo data. Summaries describe <strong>reported incidents and observed patterns</strong> and do not determine fault. Student identities are never available in this portal.</p>
+      <div class="stats" id="stats"></div>
+
+      <div class="section">
+        <h2>Priority queue <span class="muted small">(urgency 4-5 · routed privately, not on public feed)</span></h2>
+        <div id="priority" class="stack"></div>
+      </div>
+
+      <div class="section">
+        <h2>Recurring incident clusters</h2>
+        <div class="card table-wrap"><table id="clusters"></table></div>
+      </div>
+
+      <div class="section grid-2">
+        <div>
+          <h2>Campus hotspots <span class="muted small">(reports by zone, last 30 days)</span></h2>
+          <div class="card"><div class="hotspots" id="hotspots"></div></div>
+        </div>
+        <div>
+          <h2>Moderation queue</h2>
+          <div id="moderation" class="stack"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Escalation log</h2>
+        <div class="card table-wrap"><table id="escalations"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="disclaimer">
+    This portal is an incident detection and support bridge. It does not replace student handbook disciplinary proceedings, law enforcement reports, or professional psychological counseling, and it never determines guilt.
+  </footer>
+
+  <script type="module" src="/admin.js"></script>
+</body>
+</html>

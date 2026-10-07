@@ -1,0 +1,7 @@
+### STRICT BUILDER GUARDRAILS & SYSTEM CONSTRAINTS
+- **No Real Accusations or Defamation:** The application MUST block or redact posts naming or directly identifying individuals as perpetrators. The platform must never facilitate public shaming, witch hunts, or call-out culture.
+- **No Determining Guilt:** The UI, automated summaries, and system alerts must NEVER pronounce guilt, assess legal liability, or issue punitive judgments. Use objective terminology: *"Reported incident," "Pattern observed," "Pending counselor review."*
+- **No Retaliation Facilitation:** The platform must not include features that encourage public call-outs, counter-campaigns, or retaliatory group coordination. Public comments must be strictly moderated or limited to supportive reactions.
+- **No Real PII in Demo/Evaluation:** For hackathon demonstrations and testing, the database must strictly populate and process synthetic/mock data. Never expose or collect actual student data, real IDs, or genuine complaints.
+- **No Policy/Legal Substitution:** Display persistent system disclaimers stating the tool is an incident detection and support bridge, NOT a replacement for formal student handbook disciplinary proceedings, law enforcement reports, or professional psychological counseling.
+- **Emergency Safeguards:** The interface must feature a persistent, one-tap Emergency SOS banner directing users to national hotlines (e.g., NCMH 1553) and local campus emergency/security contacts.
