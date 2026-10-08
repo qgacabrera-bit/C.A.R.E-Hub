@@ -3,13 +3,6 @@ import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, storage } from './c
 const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed', updatesOpen: false, privateDraft: null, chatBusy: false };
 
 // Identity colors for topic dots (decorative; topic names are always shown as text).
-const TOPIC_COLORS = {
-  Bullying: '#2a78d6',
-  Cyberbullying: '#eb6834',
-  'Peer Pressure': '#1baf7a',
-  'Campus Safety': '#eda100',
-  'Mental Health': '#e87ba4',
-};
 
 const STANDARDS = [
   'Share experiences, not accusations: describe what happened, never name or tag people.',
@@ -37,10 +30,17 @@ function getSecret() {
 }
 const sessionHeaders = () => ({ 'X-Anon-Session': state.secret });
 
+// Anonymous animal avatars. The animal and background come from the student's anonymous number, so
+// they look random but stay the same for that student (and change with "New Identity").
+const AVATAR_ANIMALS = ['cat', 'dog', 'owl', 'fox', 'bear', 'rabbit', 'panda', 'penguin', 'frog', 'koala', 'chick', 'sheep'];
+const AVATAR_BACKGROUNDS = [1, 2, 3, 4, 5, 6].map((i) => `var(--avatar-${i})`); // warm tints, defined in styles.css
+
 function paintAvatar(node, handle) {
-  const digits = handle.replace(/\D/g, '');
-  node.textContent = digits.slice(-2) || '#';
-  node.style.setProperty('--hue', String((Number(digits) * 47) % 360));
+  const n = Number(String(handle).replace(/\D/g, '')) || 0;
+  const animal = AVATAR_ANIMALS[n % AVATAR_ANIMALS.length];
+  node.replaceChildren(svgIcon(`av-${animal}`, 'avatar-art'));
+  node.style.setProperty('--avatar-bg', AVATAR_BACKGROUNDS[Math.floor(n / AVATAR_ANIMALS.length) % AVATAR_BACKGROUNDS.length]);
+  node.title = `Anonymous ${animal.charAt(0).toUpperCase()}${animal.slice(1)}`;
 }
 function renderIdentity() {
   document.querySelectorAll('[data-handle]').forEach((n) => (n.textContent = state.handle || 'Student #…'));
@@ -176,7 +176,7 @@ async function loadConcerns() {
     node.replaceChildren(...concerns.map((c) => el('div', { class: 'concern' },
       el('div', { class: 'concern-title', text: c.title }),
       el('div', { class: 'concern-meta' },
-        el('span', { class: 'pill', text: c.status }),
+        el('span', { class: 'pill pill-status', text: c.status }),
         el('span', { text: `${sharedBy(c)} · ${timeAgo(c.last_reported_at)}` }),
       ),
     )));
@@ -195,13 +195,12 @@ function saveTopics() {
 }
 function renderTopics() {
   const list = $('#topic-list');
-  const option = (label, checked, onChange, color) => {
+  // Topics are identified by their labels only.
+  const option = (label, checked, onChange) => {
     const input = el('input', { type: 'checkbox' });
     input.checked = checked;
     input.addEventListener('change', () => onChange(input.checked));
-    const dot = color ? el('span', { class: 'topic-dot', 'aria-hidden': 'true' }) : null;
-    if (dot) dot.style.setProperty('--dot', color);
-    return el('label', { class: 'topic' }, input, el('span', { text: label }), dot);
+    return el('label', { class: 'topic' }, input, el('span', { text: label }));
   };
   list.replaceChildren(
     option('All Topics', state.topics.size === 0, () => setTopics([])),
@@ -210,7 +209,7 @@ function renderTopics() {
       if (on) next.add(c);
       else next.delete(c);
       setTopics([...next]);
-    }, TOPIC_COLORS[c])),
+    })),
   );
 }
 function setTopics(list) {
@@ -322,7 +321,7 @@ function postHeader({ handle, category, location, created_at }) {
 function concernPill(pattern) {
   if (!pattern) return null;
   const status = { active: 'Heard', reviewing: 'Under counselor review', resolved: 'Addressed by student welfare' }[pattern.status] ?? 'Heard';
-  return el('span', { class: 'pill', title: 'Similar posts are grouped so counselors can see concerns students raise' }, `${status} · ${sharedBy(pattern)}`);
+  return el('span', { class: 'pill pill-status', title: 'Similar posts are grouped so counselors can see concerns students raise' }, `${status} · ${sharedBy(pattern)}`);
 }
 
 function renderPost(p) {
@@ -338,7 +337,7 @@ function renderNotice(n) {
   return el('article', { class: 'card post notice' },
     el('div', { class: 'notice-title' }, 'Campus Incident Update (Sanitized)', el('span', { class: 'hashtag', text: '#CampusSafety' })),
     el('p', { class: 'post-body' }, n.text),
-    el('div', { class: 'meta-row' }, el('span', { class: 'pill', text: n.status }), el('span', { class: 'post-sub', text: `Updated ${timeAgo(n.updated_at)}` })),
+    el('div', { class: 'meta-row' }, el('span', { class: 'pill pill-status', text: n.status }), el('span', { class: 'post-sub', text: `Updated ${timeAgo(n.updated_at)}` })),
   );
 }
 

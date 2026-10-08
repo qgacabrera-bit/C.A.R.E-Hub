@@ -42,9 +42,9 @@ app.use('/api/admin', (_req, res, next) => {
 }, adminRouter(db));
 app.use('/api', publicRouter(db));
 // Fonts are self-hosted: a third-party font CDN would see every student's IP address.
-const fontDir = (pkg) => fileURLToPath(new URL(`./node_modules/@fontsource-variable/${pkg}/files/`, import.meta.url));
-app.use('/fonts/inter', express.static(fontDir('inter'), { maxAge: '30d', immutable: true }));
-app.use('/fonts/jakarta', express.static(fontDir('plus-jakarta-sans'), { maxAge: '30d', immutable: true }));
+const fontDir = (pkg) => fileURLToPath(new URL(`./node_modules/${pkg}/files/`, import.meta.url));
+app.use('/fonts/inter', express.static(fontDir('@fontsource-variable/inter'), { maxAge: '30d', immutable: true }));
+app.use('/fonts/nunito', express.static(fontDir('@fontsource/nunito'), { maxAge: '30d', immutable: true }));
 app.use(express.static(config.publicDir, { extensions: ['html'] }));
 
 app.use((err, _req, res, _next) => {
