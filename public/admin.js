@@ -61,7 +61,7 @@ $('#refresh').addEventListener('click', () => load());
 function renderStats(s) {
   const tile = (value, label) => el('div', { class: 'stat' }, el('div', { class: 'stat-value', text: value }), el('div', { class: 'stat-label', text: label }));
   $('#stats').replaceChildren(
-    tile(s.priority, 'Priority reports awaiting review'),
+    tile(s.priority, 'Reports in the counselor queue'),
     tile(s.open_clusters, 'Open incident clusters'),
     tile(s.moderation, 'Posts held for moderation'),
     tile(s.reports_30d, 'Reports in the last 30 days'),
@@ -72,24 +72,56 @@ function indicatorPills(list) {
   return list.length ? el('div', { class: 'indicator-list' }, ...list.map((i) => el('span', { class: 'pill', text: i }))) : null;
 }
 
-function renderPriority(items) {
-  const wrap = $('#priority');
-  if (!items.length) return wrap.replaceChildren(el('p', { class: 'muted', text: 'No high-priority reports right now.' }));
-  wrap.replaceChildren(...items.map((p) => el('article', { class: 'card stack' },
-    el('div', { class: 'post-head' },
+const CLUSTER_STATUS = { active: 'Active', reviewing: 'Under review', resolved: 'Resolved' };
+const shortDate = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+// One labeled row of a queue card.
+function fact(label, ...value) {
+  return el('div', { class: 'fact' }, el('dt', { text: label }), el('dd', {}, ...value));
+}
+
+function queueCard(p) {
+  return el('article', { class: 'card queue-card' },
+    el('div', { class: 'queue-head' },
       sevBadge(p.severity_score, p.severity_label),
-      el('span', { class: 'hashtag', text: hashtag(p.category) }),
-      el('span', { text: `${p.location} · Report #${p.id} · ${timeAgo(p.created_at)}` }),
-      p.cluster_id ? el('span', { class: 'pill', text: `Cluster #${p.cluster_id}` }) : null,
+      el('span', { class: 'queue-title', text: p.category }),
+      el('span', { class: 'queue-meta', text: `Report #${p.id} · ${timeAgo(p.created_at)}` }),
     ),
-    p.summary ? el('div', { class: 'summary', text: p.summary }) : null,
-    el('details', {},
-      el('summary', {}, 'Sanitized narrative'),
+    (p.wellbeing_risk || p.private_report) ? el('div', { class: 'queue-tags' },
+      p.wellbeing_risk ? el('span', { class: 'pill pill-alert', text: "Possible risk to the student's own safety - prioritize wellbeing outreach" }) : null,
+      p.private_report ? el('span', { class: 'pill', text: 'Sent privately via the Adviser' }) : null,
+    ) : null,
+    el('dl', { class: 'facts' },
+      fact('Reported', indicatorPills(p.indicators) ?? el('span', { class: 'muted', text: 'No specific indicators matched' })),
+      fact('Where', p.location),
+      fact('Pattern', p.cluster
+        ? el('span', {}, `Cluster #${p.cluster.id} · ${p.cluster.title}`, el('span', { class: 'muted', text: ` · ${p.cluster.report_count} reports since ${shortDate(p.cluster.first_reported_at)} · ${CLUSTER_STATUS[p.cluster.status] ?? p.cluster.status}` }))
+        : el('span', { class: 'muted', text: 'Single report (no similar reports yet)' })),
+      fact('Source', p.private_report ? 'Sent privately through the C.A.R.E. Adviser (never on the feed)' : 'Anonymous post, kept off the public feed'),
+      fact('Routed to', p.sent_to ? `${p.sent_to} · ${new Date(p.dispatched_at).toLocaleString()}` : '-'),
+      fact('Status', 'Pending counselor review'),
+    ),
+    el('details', { class: 'queue-account' },
+      el('summary', {}, "Student's account (identifying details removed)"),
       el('p', { class: 'post-body' }, taggedText(p.content)),
       p.has_attachment ? el('p', {}, el('a', { href: '#', onclick: (e) => { e.preventDefault(); openAttachment(p.id); } }, 'View attached image (metadata stripped)')) : null,
     ),
-    indicatorPills(p.indicators),
-    p.sent_to ? el('p', { class: 'small muted', text: `Routed to ${p.sent_to} · ${new Date(p.dispatched_at).toLocaleString()}` }) : null,
+    el('p', { class: 'queue-foot', text: 'Identifying details were redacted before routing. This does not determine fault.' }),
+  );
+}
+
+// Grouped by urgency so the most serious reports are read first.
+function renderPriority(items) {
+  const wrap = $('#priority');
+  if (!items.length) return wrap.replaceChildren(el('p', { class: 'muted', text: 'Nothing in the counselor queue right now.' }));
+  const groups = [
+    ['Critical · urgency 5', items.filter((p) => p.severity_score >= 5)],
+    ['High priority · urgency 4', items.filter((p) => p.severity_score === 4)],
+    ['Private reports · urgency 1-3', items.filter((p) => p.severity_score < 4)],
+  ].filter(([, list]) => list.length);
+  wrap.replaceChildren(...groups.map(([label, list]) => el('section', { class: 'queue-group' },
+    el('h3', { class: 'queue-group-title' }, label, el('span', { class: 'queue-count', text: list.length })),
+    el('div', { class: 'stack' }, ...list.map(queueCard)),
   )));
 }
 
@@ -197,7 +229,7 @@ function renderEscalations(rows) {
       el('td', { text: r.post_id ? `Report #${r.post_id}` : `Cluster #${r.cluster_id}` }),
       el('td', {}, sevBadge(r.severity_level, SEV_LABELS[r.severity_level])),
       el('td', { class: 'small', text: r.sent_to }),
-      el('td', { class: 'small', text: r.summary_brief }),
+      el('td', { class: 'small' }, el('details', {}, el('summary', {}, 'View summary'), el('p', { class: 'log-summary', text: r.summary_brief }))),
     ))),
   );
 }

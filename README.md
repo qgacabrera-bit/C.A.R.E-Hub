@@ -40,7 +40,9 @@ Set `ANTHROPIC_API_KEY` to have Claude (`claude-opus-5-5`) review sanitization, 
 
 GitHub hosts the code. **GitHub Pages can't run this app**: it serves static files only, and C.A.R.E. Hub needs its Node server and SQLite database. Pushing to `main` runs the tests and a server smoke test on Node 22 and 24 in GitHub Actions (`.github/workflows/ci.yml`).
 
-To put it online, deploy the repository to any Node or Docker host (Render, Railway, Fly.io, a VPS):
+**Render:** the repo includes a `render.yaml` Blueprint. In Render, choose **New → Blueprint**, pick this repository, and apply. The counselor passcode is generated for you; find it under the service's **Environment** tab. The free plan resets the database on every restart; see the comments in `render.yaml` to add a persistent disk.
+
+To put it online elsewhere, deploy the repository to any Node or Docker host (Railway, Fly.io, a VPS):
 
 | Setting | Value |
 |---|---|

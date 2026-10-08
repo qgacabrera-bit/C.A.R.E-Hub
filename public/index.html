@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>C.A.R.E. Hub</title>
-  <meta name="description" content="Campus Anonymous Reporting & Escalation Hub - share experiences anonymously, get support, and help surface campus safety patterns.">
+  <meta name="description" content="Campus Anonymous Reporting & Escalation Hub - share experiences anonymously, get support, and help surface campus safety concerns.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/inter/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="has-photo-bg">
   <svg width="0" height="0" class="sr-only" aria-hidden="true">
     <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
@@ -23,6 +23,8 @@
     <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
     <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></symbol>
     <symbol id="i-ear" viewBox="0 0 24 24"><path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></symbol>
   </svg>
 
@@ -76,7 +78,7 @@
 
       <div class="rail-mobile-only">
         <section class="card"><h3 class="card-title">24/7 Support</h3><div data-helplines></div></section>
-        <section class="card"><h3 class="card-title">Campus Patterns Observed</h3><div data-patterns></div></section>
+        <section class="card"><h3 class="card-title">Concerns Raised</h3><div data-concerns></div></section>
       </div>
     </aside>
     <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
@@ -145,7 +147,7 @@
         </div>
 
         <div id="report-result" class="stack" hidden></div>
-        <div id="feed" class="feed" aria-live="polite"></div>
+        <div id="feed" aria-live="polite"></div>
       </section>
 
       <!-- MY REPORTS -->
@@ -169,7 +171,7 @@
               <li>Names, phone numbers, emails, student IDs and social handles are replaced with tags like [Student A] before anything is saved.</li>
               <li>Urgent reports (threats, harassment, self-harm) skip the public feed and go privately to counselors.</li>
               <li>Photos are only ever seen by counselors, with location metadata removed.</li>
-              <li>Similar reports are grouped into patterns so counselors can act. Patterns show counts, never your words.</li>
+              <li>Similar reports are grouped into concerns so counselors can act. Concerns show counts, never your words.</li>
             </ul>
           </article>
           <article class="card prose">
@@ -187,32 +189,37 @@
     </main>
 
     <!-- RIGHT SIDEBAR -->
-    <aside class="rail rail-right" aria-label="Support and campus patterns">
+    <aside class="rail rail-right" aria-label="Support and concerns raised">
       <section class="card" aria-labelledby="support-title">
         <h3 class="card-title" id="support-title">24/7 Support</h3>
         <div data-helplines></div>
       </section>
-      <section class="card" aria-labelledby="patterns-title">
-        <h3 class="card-title" id="patterns-title">Campus Patterns Observed</h3>
-        <div data-patterns></div>
-      </section>
-      <section class="card" aria-labelledby="standards-title">
-        <h3 class="card-title" id="standards-title">Community Standards</h3>
-        <ul class="standards" data-standards></ul>
+      <section class="card" aria-labelledby="concerns-title">
+        <h3 class="card-title" id="concerns-title">Concerns Raised</h3>
+        <div data-concerns></div>
       </section>
     </aside>
   </div>
 
-  <!-- Adviser chat widget -->
-  <button class="adviser-fab" type="button" id="adviser-fab" aria-expanded="false" aria-controls="adviser">
-    <svg class="icon"><use href="#i-chat"/></svg>C.A.R.E. Adviser
-  </button>
+  <!-- Adviser chat widget: the adviser stands on her chat button so students see someone is there to help -->
+  <div class="adviser-launcher" id="adviser-launcher">
+    <div class="adviser-hello" id="adviser-hello" hidden>
+      <button class="adviser-hello-text" type="button" data-open-adviser>Hi! I'm here if you need someone to talk to.</button>
+      <button class="adviser-hello-close" type="button" id="adviser-hello-close" aria-label="Hide this message">×</button>
+    </div>
+    <img class="adviser-figure" src="/img/care-adviser.png" alt="" width="269" height="360" decoding="async" data-open-adviser>
+    <button class="adviser-fab" type="button" id="adviser-fab" aria-label="Open the C.A.R.E. Adviser chat" aria-expanded="false" aria-controls="adviser">
+      <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span class="fab-label">C.A.R.E. Adviser</span>
+    </button>
+  </div>
   <section class="adviser" id="adviser" aria-label="C.A.R.E. Adviser chat" hidden>
     <div class="adviser-head">
-      <div>
+      <img class="adviser-head-avatar" src="/img/care-adviser-chibi.png" alt="" width="40" height="40">
+      <div class="adviser-head-text">
         <strong>C.A.R.E. Adviser</strong>
         <p id="adviser-mode">AI support assistant · not a counselor · chats are not stored on our servers</p>
       </div>
+      <button class="icon-btn" type="button" id="adviser-clear" aria-label="Start a new conversation" title="Start a new conversation"><svg class="icon"><use href="#i-refresh"/></svg></button>
       <button class="icon-btn" type="button" id="adviser-close" aria-label="Close adviser">×</button>
     </div>
     <div class="adviser-log" id="adviser-log" aria-live="polite"></div>
@@ -222,12 +229,13 @@
       <div class="adviser-actions">
         <button class="btn btn-primary btn-sm" type="submit">Send</button>
         <button class="btn btn-sm" type="button" id="adviser-draft">Draft a post</button>
-        <button class="btn btn-sm" type="button" id="adviser-clear" title="Clear this conversation">Clear</button>
+        <button class="btn btn-sm" type="button" id="adviser-private" title="Only the Guidance team sees it - never on the feed">Send privately</button>
       </div>
     </form>
   </section>
 
-  <footer class="disclaimer">
+
+  <footer class="disclaimer" id="disclaimer">
     <span class="disc-long">Support bridge only - <strong>not</strong> a replacement for school disciplinary proceedings, law enforcement reports, or professional counseling. Reports never determine fault. Demo: all posts are synthetic.</span>
     <span class="disc-short">Support bridge only - <strong>not</strong> a substitute for school discipline, police reports, or counseling. Demo data.</span>
   </footer>

@@ -75,7 +75,7 @@ export async function seedIfEmpty(db) {
 }
 
 // `npm run seed` -> wipe and reload the synthetic dataset.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const db = openDb();
   if (process.argv.includes('--reset')) resetDb(db);
   const count = await seed(db);

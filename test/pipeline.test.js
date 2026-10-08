@@ -1,4 +1,7 @@
 import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import { openDb } from '../src/db.js';
 import { scrubText, containsGuiltLanguage } from '../src/pipeline/scrubber.js';
@@ -13,7 +16,7 @@ const post = (db, overrides) => submitPost(db, { authorToken: token(1), useLlm: 
 
 test('scrubber reproduces the spec example redactions', () => {
   const r = scrubText('Mark Santos and his clique from 3-B are sharing non-consensual photos of John Doe in our group chat and calling him names every afternoon during chemistry lab.');
-  assert.match(r.text, /^\[Student Group A\] from 3-B/);
+  assert.match(r.text, /^\[Student Group A\] from \[Section\]/); // sections narrow it to a few students
   assert.match(r.text, /photos of \[Student B\]/);
   assert.doesNotMatch(r.text, /Mark|Santos|John|Doe/);
 });
@@ -116,6 +119,29 @@ test('end-to-end: personal crisis reports are escalated but never clustered', as
   assert.equal(r.severity_score, 5);
   assert.ok(r.crisis);
   assert.equal(r.cluster, null);
+});
+
+test('cluster titles drop "Pattern", old titles are migrated, and students are counted once', async () => {
+  const db = openDb(':memory:');
+  const now = Date.now();
+  await post(db, { category: 'Bullying', location_tag: 'Cafeteria', narrative: 'Some students keep taking seats from others at lunch time.', now: now - 864e5 });
+  await post(db, { category: 'Bullying', location_tag: 'Cafeteria', narrative: 'People throw food at the younger students during lunch.', now: now - 3600e3 });
+  const r = await post(db, { authorToken: token(9), category: 'Bullying', location_tag: 'Cafeteria', narrative: 'A group blocks the cafeteria line and pushes the younger kids.', now });
+  assert.equal(r.cluster.title, 'Cafeteria Bullying');
+  assert.equal(r.cluster.report_count, 3);
+  assert.equal(r.cluster.student_count, 2); // token(1) posted twice
+
+
+  // A database from an older version gets its titles cleaned up when it is opened.
+  const file = path.join(os.tmpdir(), `care-migrate-${process.pid}-${Date.now()}.db`);
+  const legacy = openDb(file);
+  legacy.exec(`INSERT INTO incident_clusters (cluster_title, incident_type, location_tag, report_count, first_reported_at, last_reported_at)
+               VALUES ('Gym Peer Pressure Pattern', 'Peer Pressure', 'Gym', 2, '2026-01-01', '2026-01-02')`);
+  legacy.close();
+  const reopened = openDb(file);
+  assert.equal(reopened.prepare('SELECT cluster_title FROM incident_clusters').get().cluster_title, 'Gym Peer Pressure');
+  reopened.close();
+  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(file + suffix, { force: true });
 });
 
 test('validation rejects unknown categories and short narratives', async () => {

@@ -4,6 +4,8 @@
 const INDICATORS = [
   // 5 - imminent danger to life
   { score: 5, label: 'self-harm or suicide risk', crisis: true, re: /\b(kill(?:ing)? myself|end(?:ing)? my life|suicid\w*|self[- ]?harm|cut(?:ting)? myself|hurt(?:ing)? myself|want(?:ed)? to die|don'?t want to (?:live|be here)|overdos\w*|no reason to live)\b/i },
+  // Filipino / Taglish phrasings of the same risk.
+  { score: 5, label: 'self-harm or suicide risk', crisis: true, re: /\b(magpakamatay|nagpapakamatay|ayoko na(?:ng)? mabuhay|gusto ko na(?:ng)? mamatay|sasaktan ko (?:ang )?sarili|saktan (?:ang )?sarili|wala na(?:ng)? (?:silbi|kwenta) (?:ang )?buhay)\b/i },
   { score: 5, label: 'threat of violence or weapon', re: /\b(gun|knife|knives|weapon|bomb|shoot(?:ing)?|stab(?:bing)?|kill (?:him|her|them|you|us|me|everyone)|going to kill|murder)\b/i },
 
   // 4 - high priority

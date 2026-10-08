@@ -10,9 +10,9 @@ import { normalizeLocation } from './location.js';
 const DAY = 24 * 60 * 60 * 1000;
 
 const CATEGORY_NOUN = {
-  Bullying: 'Bullying Pattern',
+  Bullying: 'Bullying',
   Cyberbullying: 'Digital Harassment',
-  'Peer Pressure': 'Peer Pressure Pattern',
+  'Peer Pressure': 'Peer Pressure',
   'Campus Safety': 'Safety Hazard',
   'Mental Health': 'Wellbeing Concern',
 };
@@ -141,7 +141,7 @@ function attachToCluster(db, match, { category, location, nowIso }) {
     db.prepare(`UPDATE incident_clusters SET report_count = report_count + 1, last_reported_at = ?,
                 status = CASE WHEN status = 'resolved' THEN 'active' ELSE status END WHERE id = ?`).run(nowIso, clusterId);
   } else {
-    const title = `${location} ${CATEGORY_NOUN[match.post.category] ?? 'Incident Pattern'}`;
+    const title = `${location} ${CATEGORY_NOUN[match.post.category] ?? 'Concern'}`;
     clusterId = Number(
       db.prepare(`INSERT INTO incident_clusters (cluster_title, incident_type, location_tag, report_count, first_reported_at, last_reported_at, status)
                   VALUES (?, ?, ?, 2, ?, ?, 'active')`)
@@ -156,7 +156,7 @@ function attachToCluster(db, match, { category, location, nowIso }) {
 // Escalation summaries - objective wording only, validated against guilt language.
 // ---------------------------------------------------------------------------------------------
 
-export function buildSummary({ category, location, score, indicators, cluster, crisis }) {
+export function buildSummary({ category, location, score, indicators, cluster, crisis, privateReport = false }) {
   const parts = [
     `Reported incident - ${category} at ${location}.`,
     `Urgency ${score}/5 (${severityLabel(score)}).`,
@@ -166,6 +166,7 @@ export function buildSummary({ category, location, score, indicators, cluster, c
     parts.push(`Pattern observed: linked to Cluster #${cluster.id} "${cluster.cluster_title}" (${cluster.report_count} reports since ${cluster.first_reported_at.slice(0, 10)}).`);
   }
   if (crisis) parts.push('Possible risk to the reporting student\'s own safety - prioritize wellbeing outreach via the Guidance Office.');
+  if (privateReport) parts.push("Sent privately through the C.A.R.E. Adviser at the student's request; it is not shown on the public feed.");
   parts.push('Identifying details were redacted before routing. Pending counselor review; this summary does not determine fault.');
   const summary = parts.join(' ');
   if (containsGuiltLanguage(summary)) throw new Error('Escalation summary failed guilt-language check');
@@ -253,7 +254,8 @@ export function validateSubmission({ category, location_tag, narrative }) {
 /**
  * Process a new anonymous post end-to-end. `now` is injectable for seeding/tests.
  */
-export async function submitPost(db, { authorToken, category, location_tag, narrative, attachment, now = Date.now(), useLlm = true }) {
+export async function submitPost(db, { authorToken, category, location_tag, narrative, attachment, visibility = 'public', now = Date.now(), useLlm = true }) {
+  const isPrivate = visibility === 'private';
   const valid = validateSubmission({ category, location_tag, narrative });
   const raw = valid.text;
   location_tag = valid.location;
@@ -282,15 +284,16 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
     }
 
     let status = 'published';
-    if (sev.crisis || score >= config.escalationThreshold) status = 'flagged_admin';
+    // Private reports always go straight to counselors, whatever their urgency.
+    if (isPrivate || sev.crisis || score >= config.escalationThreshold) status = 'flagged_admin';
     else if (clean.retaliation || clean.holdForResidual) status = 'pending_moderation';
 
     const postId = Number(
       db.prepare(`INSERT INTO posts (anonymous_author_token, category, raw_content, sanitized_content, location_tag, severity_score,
-                  risk_indicators, moderation_notes, cluster_id, status, has_attachment, created_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                  risk_indicators, moderation_notes, cluster_id, status, has_attachment, visibility, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(authorToken, category, config.retainRawContent ? raw : null, clean.text, location_tag, score,
-          JSON.stringify(indicators), JSON.stringify(clean.notes), cluster?.id ?? null, status, file ? 1 : 0, nowIso).lastInsertRowid,
+          JSON.stringify(indicators), JSON.stringify(clean.notes), cluster?.id ?? null, status, file ? 1 : 0, isPrivate ? 'private' : 'public', nowIso).lastInsertRowid,
     );
     if (file) db.prepare('INSERT INTO attachments (post_id, mime_type, data, created_at) VALUES (?, ?, ?, ?)').run(postId, file.mime, file.data, nowIso);
 
@@ -299,7 +302,7 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
         postId,
         clusterId: cluster?.id ?? null,
         score,
-        summary: buildSummary({ category, location: location_tag, score, indicators, cluster, crisis: sev.crisis }),
+        summary: buildSummary({ category, location: location_tag, score, indicators, cluster, crisis: sev.crisis, privateReport: isPrivate }),
         nowIso,
       });
     }
@@ -324,13 +327,17 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
       post_id: postId,
       handle: displayHandle(authorToken),
       status,
+      visibility: isPrivate ? 'private' : 'public',
       severity_score: score,
       severity_label: severityLabel(score),
       sanitized_content: clean.text,
       redaction_count: clean.redactionCount,
       reviewed_by: clean.reviewedBy,
       crisis: sev.crisis,
-      cluster: cluster ? { id: cluster.id, title: cluster.cluster_title, report_count: cluster.report_count, match_reason: match.reason, similarity: match.similarity } : null,
+      cluster: cluster ? {
+        id: cluster.id, title: cluster.cluster_title, report_count: cluster.report_count, match_reason: match.reason, similarity: match.similarity,
+        student_count: db.prepare('SELECT COUNT(DISTINCT anonymous_author_token) AS n FROM posts WHERE cluster_id = ?').get(cluster.id).n,
+      } : null,
       notes: clean.notes,
     };
   });

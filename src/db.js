@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS posts (
   status                 TEXT NOT NULL DEFAULT 'pending_moderation'
                          CHECK (status IN ('pending_moderation','published','flagged_admin','withheld')),
   has_attachment         INTEGER NOT NULL DEFAULT 0,
+  visibility             TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','private')), -- private: counselors only
   created_at             TEXT NOT NULL
 );
 
@@ -69,7 +70,18 @@ export function openDb(dbPath = config.dbPath) {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// Idempotent data fixes for databases created by earlier versions.
+function migrate(db) {
+  // Private reports (sent through the Adviser, counselors only).
+  const cols = db.prepare('PRAGMA table_info(posts)').all().map((c) => c.name);
+  if (!cols.includes('visibility')) db.exec("ALTER TABLE posts ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'");
+
+  // Cluster titles no longer end in "Pattern" ("Cafeteria Bullying Pattern" -> "Cafeteria Bullying").
+  db.exec(`UPDATE incident_clusters SET cluster_title = substr(cluster_title, 1, length(cluster_title) - 8) WHERE cluster_title LIKE '% Pattern'`);
 }
 
 export function resetDb(db) {

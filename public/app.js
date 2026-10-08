@@ -1,6 +1,6 @@
 import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, storage } from './common.js';
 
-const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed' };
+const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed', updatesOpen: false, privateDraft: null, chatBusy: false };
 
 // Identity colors for topic dots (decorative; topic names are always shown as text).
 const TOPIC_COLORS = {
@@ -103,12 +103,12 @@ $('#drawer-backdrop').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeDrawer();
-    document.querySelectorAll('.react-wrap.open').forEach((w) => w.classList.remove('open'));
+    closeReactionDocks();
   }
 });
 
 // ---------------------------------------------------------------------------------------------
-// Sidebar cards: helplines, patterns, standards
+// Sidebar cards: helplines, concerns raised, standards
 // ---------------------------------------------------------------------------------------------
 function svgIcon(id, cls = 'icon') {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -143,20 +143,26 @@ function renderHelplines() {
   });
 }
 
-async function loadPatterns() {
-  let patterns = [];
+// "N students shared this" (falls back to the report count from an older server).
+function sharedBy(info) {
+  const n = info.student_count ?? info.report_count;
+  return `${n} student${n === 1 ? '' : 's'} shared this`;
+}
+
+async function loadConcerns() {
+  let concerns = [];
   try {
-    patterns = await api('/api/patterns');
+    concerns = await api('/api/patterns');
   } catch {
     /* sidebar is best-effort */
   }
-  document.querySelectorAll('[data-patterns]').forEach((node) => {
-    if (!patterns.length) return node.replaceChildren(el('p', { class: 'small muted', text: 'No recurring patterns right now.' }));
-    node.replaceChildren(...patterns.map((p) => el('div', { class: 'pattern' },
-      el('div', { class: 'pattern-title', text: p.title }),
-      el('div', { class: 'pattern-meta' },
-        el('span', { class: p.status === 'Under counselor review' ? 'pill pill-brand' : 'pill', text: p.status }),
-        el('span', { text: `${p.report_count} reports · ${timeAgo(p.last_reported_at)}` }),
+  document.querySelectorAll('[data-concerns]').forEach((node) => {
+    if (!concerns.length) return node.replaceChildren(el('p', { class: 'small muted', text: 'No concerns raised right now.' }));
+    node.replaceChildren(...concerns.map((c) => el('div', { class: 'concern' },
+      el('div', { class: 'concern-title', text: c.title }),
+      el('div', { class: 'concern-meta' },
+        el('span', { class: 'pill', text: c.status }),
+        el('span', { text: `${sharedBy(c)} · ${timeAgo(c.last_reported_at)}` }),
       ),
     )));
   });
@@ -216,34 +222,35 @@ function buildReactions(post) {
   const R = REACTION_UI;
   const kinds = Object.keys(R);
   post.reactions ??= {};
+  const dockId = `rx-dock-${post.id}`;
   const wrap = el('div', { class: 'react-wrap' });
-  const primary = el('button', { class: 'react-primary', type: 'button' });
-  const dockInner = el('div', { class: 'dock-inner', role: 'toolbar', 'aria-label': 'Choose a reaction' });
-  const dock = el('div', { class: 'reactions-dock' }, dockInner);
-  const chips = el('div', { class: 'react-chips' });
+  const primary = el('button', { class: 'react-primary', type: 'button', 'aria-expanded': 'false', 'aria-controls': dockId });
+  const dockInner = el('div', { class: 'dock-inner', role: 'group', 'aria-label': 'Reactions' });
+  const dock = el('div', { class: 'reactions-dock', id: dockId }, dockInner);
+
+  const setOpen = (open) => {
+    wrap.classList.toggle('open', open);
+    primary.setAttribute('aria-expanded', String(open));
+  };
 
   const paint = () => {
     const mine = Object.hasOwn(R, post.my_reaction ?? '') ? post.my_reaction : null;
-    primary.replaceChildren(reactionIcon(mine ?? 'support'), R[mine ?? 'support'].short);
-    primary.setAttribute('aria-pressed', String(Boolean(mine)));
-    primary.setAttribute('aria-label', mine ? `Remove your ${R[mine].label} reaction` : 'React with Support');
-    dockInner.querySelectorAll('.dock-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === mine)));
-    chips.replaceChildren(...kinds
-      .filter((k) => post.reactions[k] > 0)
-      .sort((a, b) => post.reactions[b] - post.reactions[a])
-      .map((k) => {
-        const chip = el('button', {
-          class: 'react-chip', type: 'button', 'aria-pressed': String(k === mine),
-          'aria-label': `${R[k].label}: ${post.reactions[k]}${k === mine ? ' (yours, click to remove)' : ' (click to react)'}`,
-          title: R[k].label,
-        }, reactionIcon(k, 'rx-sm'), el('b', { text: post.reactions[k] }));
-        chip.addEventListener('click', () => react(k));
-        return chip;
-      }));
+    const total = kinds.reduce((sum, k) => sum + (post.reactions[k] || 0), 0);
+    const label = mine ? R[mine].short : 'Support';
+    primary.classList.toggle('is-mine', Boolean(mine));
+    primary.replaceChildren(reactionIcon(mine ?? 'support'), el('span', { text: label }), el('span', { class: 'react-total', text: `· ${total}` }));
+    primary.setAttribute('aria-label', `${mine ? `You reacted ${R[mine].label}` : 'Support'}, ${total} reaction${total === 1 ? '' : 's'}. Show reaction options`);
+    dockInner.querySelectorAll('.dock-btn').forEach((b) => {
+      const k = b.dataset.kind;
+      const n = post.reactions[k] || 0;
+      b.setAttribute('aria-pressed', String(k === mine));
+      b.setAttribute('aria-label', `${R[k].label}, ${n}${k === mine ? ' (your reaction, select to remove)' : ''}`);
+      b.querySelector('.dock-count').textContent = n;
+    });
   };
 
   async function react(kind) {
-    wrap.classList.remove('open');
+    setOpen(false);
     try {
       const res = await api(`/api/posts/${post.id}/react`, { method: 'POST', body: { secret: state.secret, kind } });
       post.my_reaction = res.my_reaction;
@@ -252,46 +259,35 @@ function buildReactions(post) {
     } catch (e) {
       primary.title = e.message;
     }
+    primary.focus();
   }
 
   for (const k of kinds) {
-    const b = el('button', { class: 'dock-btn', type: 'button', 'data-kind': k, 'data-tip': R[k].label, 'aria-label': `React with ${R[k].label}` }, reactionIcon(k, 'rx-lg'));
+    const b = el('button', { class: 'dock-btn', type: 'button', 'data-kind': k, title: R[k].label },
+      reactionIcon(k, 'rx-lg'), el('span', { class: 'dock-label', text: R[k].short }), el('span', { class: 'dock-count' }));
     b.addEventListener('click', () => react(k));
     dockInner.append(b);
   }
 
-  // Click: toggle your current reaction, or add Support. Touch long-press opens the dock.
-  let longPressed = false;
-  let pressTimer;
-  primary.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch') return;
-    longPressed = false;
-    pressTimer = setTimeout(() => {
-      longPressed = true;
-      wrap.classList.add('open');
-    }, 420);
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => primary.addEventListener(t, () => clearTimeout(pressTimer)));
-  primary.addEventListener('contextmenu', (e) => {
-    if (longPressed) e.preventDefault();
-  });
+  // Tap/click reveals the reaction types; choosing one reacts (same one again removes it).
   primary.addEventListener('click', () => {
-    if (longPressed) {
-      longPressed = false;
-      return;
-    }
-    react(post.my_reaction ?? 'support');
+    const open = !wrap.classList.contains('open');
+    closeReactionDocks();
+    setOpen(open);
   });
 
-  wrap.append(dock, primary);
+  wrap.append(primary, dock);
   paint();
-  return [wrap, chips];
+  return wrap;
 }
-document.addEventListener('pointerdown', (e) => {
+function closeReactionDocks(except) {
   document.querySelectorAll('.react-wrap.open').forEach((w) => {
-    if (!w.contains(e.target)) w.classList.remove('open');
+    if (w === except) return;
+    w.classList.remove('open');
+    w.querySelector('.react-primary')?.setAttribute('aria-expanded', 'false');
   });
-});
+}
+document.addEventListener('pointerdown', (e) => closeReactionDocks(e.target.closest('.react-wrap')));
 
 // ---------------------------------------------------------------------------------------------
 // Feed
@@ -308,18 +304,18 @@ function postHeader({ handle, category, location, created_at }) {
   );
 }
 
-function patternPill(pattern) {
+function concernPill(pattern) {
   if (!pattern) return null;
-  const status = { active: 'Pattern observed', reviewing: 'Under counselor review', resolved: 'Addressed by student welfare' }[pattern.status] ?? 'Pattern observed';
-  return el('span', { class: 'pill pill-brand', title: 'Similar reports are grouped so counselors can spot patterns' }, `${status} · ${pattern.report_count} similar reports`);
+  const status = { active: 'Heard', reviewing: 'Under counselor review', resolved: 'Addressed by student welfare' }[pattern.status] ?? 'Heard';
+  return el('span', { class: 'pill', title: 'Similar posts are grouped so counselors can see concerns students raise' }, `${status} · ${sharedBy(pattern)}`);
 }
 
 function renderPost(p) {
   return el('article', { class: 'card post' },
     postHeader(p),
     el('p', { class: 'post-body' }, taggedText(p.content)),
-    p.pattern ? el('div', { class: 'meta-row' }, patternPill(p.pattern)) : null,
-    el('div', { class: 'post-foot' }, ...buildReactions(p)),
+    p.pattern ? el('div', { class: 'meta-row' }, concernPill(p.pattern)) : null,
+    el('div', { class: 'post-foot' }, buildReactions(p)),
   );
 }
 
@@ -327,8 +323,32 @@ function renderNotice(n) {
   return el('article', { class: 'card post notice' },
     el('div', { class: 'notice-title' }, 'Campus Incident Update (Sanitized)', el('span', { class: 'hashtag', text: '#CampusSafety' })),
     el('p', { class: 'post-body' }, n.text),
-    el('div', { class: 'meta-row' }, el('span', { class: 'pill pill-brand', text: n.status }), el('span', { class: 'small muted', text: `Updated ${timeAgo(n.updated_at)}` })),
+    el('div', { class: 'meta-row' }, el('span', { class: 'pill', text: n.status }), el('span', { class: 'post-sub', text: `Updated ${timeAgo(n.updated_at)}` })),
   );
+}
+
+function feedSection(label, key, cards) {
+  return el('section', { class: 'feed-section', 'aria-labelledby': `section-${key}` },
+    el('h2', { class: 'section-label', id: `section-${key}`, text: label }),
+    el('div', { class: 'feed' }, ...cards));
+}
+
+// All campus incident updates fold into one summary card that expands in place.
+function updatesSummary(notices) {
+  const n = notices.length;
+  const list = el('div', { class: 'updates-list', id: 'updates-list', hidden: !state.updatesOpen }, ...notices.map(renderNotice));
+  const toggleText = el('span', { text: state.updatesOpen ? 'Hide' : 'Show' });
+  const summary = el('button', { class: 'card updates-summary', type: 'button', 'aria-expanded': String(state.updatesOpen), 'aria-controls': 'updates-list' },
+    el('span', { class: 'updates-summary-text' }, el('span', { class: 'updates-summary-title', text: `${n} campus update${n === 1 ? '' : 's'}` })),
+    el('span', { class: 'updates-summary-toggle' }, toggleText, svgIcon('i-chevron')),
+  );
+  summary.addEventListener('click', () => {
+    state.updatesOpen = !state.updatesOpen;
+    summary.setAttribute('aria-expanded', String(state.updatesOpen));
+    toggleText.textContent = state.updatesOpen ? 'Hide' : 'Show';
+    list.hidden = !state.updatesOpen;
+  });
+  return el('div', {}, summary, list);
 }
 
 let feedSeq = 0;
@@ -339,8 +359,11 @@ async function loadFeed() {
     const q = state.topics.size ? `?categories=${encodeURIComponent([...state.topics].join(','))}` : '';
     const data = await api(`/api/feed${q}`, { headers: sessionHeaders() });
     if (seq !== feedSeq) return; // a newer filter change won
-    const items = [...data.notices.map(renderNotice), ...data.posts.map(renderPost)];
-    feed.replaceChildren(...(items.length ? items : [el('div', { class: 'card empty', text: 'No posts in these topics yet.' })]));
+    const sections = [];
+    if (data.notices.length) sections.push(feedSection('Campus updates', 'updates', [updatesSummary(data.notices)]));
+    sections.push(feedSection('From students', 'students',
+      data.posts.length ? data.posts.map(renderPost) : [el('div', { class: 'card empty', text: 'No posts in these topics yet.' })]));
+    feed.replaceChildren(...sections);
   } catch (e) {
     feed.replaceChildren(el('div', { class: 'alert alert-error', text: `Couldn't load the feed: ${e.message}` }));
   }
@@ -399,7 +422,7 @@ function schedulePreview() {
       if (seq !== previewSeq) return;
       $('#preview-text').replaceChildren(taggedText(res.text));
       $('#preview-flags').replaceChildren(...[
-        res.redaction_count ? el('span', { class: 'pill pill-brand', text: `${res.redaction_count} identifier${res.redaction_count === 1 ? '' : 's'} removed` }) : el('span', { class: 'pill', text: 'No identifiers found' }),
+        res.redaction_count ? el('span', { class: 'pill', text: `${res.redaction_count} identifier${res.redaction_count === 1 ? '' : 's'} removed` }) : el('span', { class: 'pill', text: 'No identifiers found' }),
         res.private_routing ? el('span', { class: 'pill flag-private', text: 'Will go privately to counselors - not shown on the feed' }) : null,
         res.held_for_moderation && !res.private_routing ? el('span', { class: 'pill', text: 'A counselor will review this before it posts' }) : null,
       ].filter(Boolean));
@@ -459,7 +482,7 @@ $('#composer-form').addEventListener('submit', async (e) => {
     collapseComposer();
     renderResult(result);
     loadFeed();
-    loadPatterns();
+    loadConcerns();
   } catch (err) {
     showFormError(err.message);
   } finally {
@@ -495,7 +518,7 @@ function renderResult(r) {
       el('div', { class: 'meta-row' },
         sevBadge(r.severity_score, r.severity_label),
         el('span', { class: 'pill', text: `${r.redaction_count} identifier(s) removed` }),
-        r.cluster ? el('span', { class: 'pill pill-brand', text: `Linked to a pattern · ${r.cluster.report_count} similar reports` }) : null,
+        r.cluster ? el('span', { class: 'pill', text: `Part of a concern raised · ${sharedBy(r.cluster)}` }) : null,
       ),
       el('div', { class: 'privacy-preview' }, el('div', { class: 'privacy-preview-text' }, taggedText(r.sanitized_content))),
       el('div', {}, el('button', { class: 'btn btn-sm', type: 'button', 'data-view-link': 'mine' }, 'Track in My Reports')),
@@ -518,7 +541,7 @@ async function loadMine() {
     list.replaceChildren(...data.posts.map((p) => el('article', { class: 'card post' },
       postHeader({ handle: data.handle, category: p.category, location: p.location, created_at: p.created_at }),
       el('p', { class: 'post-body' }, taggedText(p.content)),
-      el('div', { class: 'meta-row' }, sevBadge(p.severity_score, p.severity_label), patternPill(p.pattern)),
+      el('div', { class: 'meta-row' }, sevBadge(p.severity_score, p.severity_label), concernPill(p.pattern)),
       el('div', { class: 'alert' }, el('strong', { text: 'Status: ' }), p.follow_up),
       p.status !== 'flagged_admin' ? el('div', { class: 'post-foot' },
         el('button', {
@@ -546,19 +569,46 @@ async function loadMine() {
 // ---------------------------------------------------------------------------------------------
 function openAdviser() {
   $('#adviser').hidden = false;
-  $('#adviser-fab').hidden = true;
+  $('#adviser-launcher').hidden = true;
   $('#adviser-fab').setAttribute('aria-expanded', 'true');
-  if (!state.chat.length) pushMessage('assistant', 'Hi, I\'m the C.A.R.E. Adviser. I\'m here to listen and help you think things through. You don\'t need to share any names. What\'s on your mind?', false);
+  if (!state.chat.length) pushMessage('assistant', WELCOME.content, false, { suggestions: WELCOME.suggestions });
   $('#adviser-input').focus();
 }
 function closeAdviser() {
   $('#adviser').hidden = true;
-  $('#adviser-fab').hidden = false;
+  $('#adviser-launcher').hidden = false;
   $('#adviser-fab').setAttribute('aria-expanded', 'false');
   $('#adviser-fab').focus();
 }
 $('#adviser-fab').addEventListener('click', openAdviser);
 $('#adviser-close').addEventListener('click', closeAdviser);
+document.querySelectorAll('[data-open-adviser]').forEach((n) => n.addEventListener('click', openAdviser));
+
+// "I'm here if you need someone to talk to" - shown until the student hides it once.
+function initAdviserHello() {
+  $('#adviser-hello').hidden = storage.get('care.helloHidden') === '1';
+  $('#adviser-hello-close').addEventListener('click', () => {
+    $('#adviser-hello').hidden = true;
+    storage.set('care.helloHidden', '1');
+  });
+}
+
+// Adviser replies carry her chibi avatar so students can see who is answering.
+function adviserMessage(text, extraClass = '') {
+  return el('div', { class: 'msg-row msg-row-assistant' },
+    el('img', { class: 'msg-avatar', src: '/img/care-adviser-chibi.png', alt: '', width: '32', height: '32' }),
+    el('div', { class: `msg msg-assistant ${extraClass}`.trim(), text }),
+  );
+}
+
+const WELCOME = {
+  content: "Hi, I'm the C.A.R.E. Adviser. I'm here to listen and help you think things through. You don't need to share any names. What's on your mind?",
+  suggestions: [
+    { label: 'Something happened at school', action: 'reply', text: 'Something happened at school' },
+    { label: "I'm feeling stressed", action: 'reply', text: "I'm feeling stressed" },
+    { label: 'Is this anonymous?', action: 'reply', text: 'Will anyone know it was me?' },
+  ],
+};
 
 function saveChat() {
   try {
@@ -567,32 +617,71 @@ function saveChat() {
     /* ignore */
   }
 }
+
+// Quick replies under her latest message. Calls are real links so they work as one tap.
+function suggestionChips(list) {
+  return el('div', { class: 'chips-row', role: 'group', 'aria-label': 'Suggested replies' }, ...list.map((s) => {
+    if (s.action === 'call') return el('a', { class: 'chip-btn chip-urgent', href: `tel:${s.number}` }, s.label);
+    const chip = el('button', { class: `chip-btn${s.action === 'private_report' ? ' chip-primary' : ''}`, type: 'button' }, s.label);
+    chip.addEventListener('click', () => runSuggestion(s));
+    return chip;
+  }));
+}
+
+function runSuggestion(s) {
+  if (s.action === 'reply') return sendChat(s.text ?? s.label);
+  if (s.action === 'private_report') return startPrivateReport();
+  if (s.action === 'draft_post') return draftPost();
+  if (s.action === 'hotlines') return showView('hotlines');
+  if (s.action === 'view_mine') return showView('mine');
+}
+
 function renderChat() {
-  $('#adviser-log').replaceChildren(...state.chat.map((m) => (m.crisis ? crisisCard() : el('div', { class: `msg msg-${m.role}`, text: m.content }))));
+  const nodes = state.chat.map((m) => {
+    if (m.crisis) return crisisCard();
+    return m.role === 'assistant' ? adviserMessage(m.content) : el('div', { class: 'msg msg-user', text: m.content });
+  });
+  const last = state.chat.at(-1);
+  if (last?.role === 'assistant' && last.suggestions?.length && !state.privateDraft && !state.chatBusy) nodes.push(suggestionChips(last.suggestions));
+  if (state.privateDraft) nodes.push(privateReportCard(state.privateDraft));
+  $('#adviser-log').replaceChildren(...nodes);
   $('#adviser-log').scrollTop = $('#adviser-log').scrollHeight;
 }
-function pushMessage(role, content, persist = true) {
-  state.chat.push({ role, content });
+
+function pushMessage(role, content, persist = true, extra = {}) {
+  state.chat.push({ role, content, ...extra });
   if (persist) saveChat();
   renderChat();
 }
 
-$('#adviser-form').addEventListener('submit', async (e) => {
+// What the server sees: plain turns plus the adviser's last `offer`, so "yes"/"oo" is understood.
+const chatPayload = () => state.chat.filter((m) => !m.crisis).map(({ role, content, offer }) => ({ role, content, ...(offer ? { offer } : {}) }));
+const hasStory = () => state.chat.some((m) => m.role === 'user' && m.content.trim().length >= 12);
+
+async function sendChat(text) {
+  if (state.chatBusy) return;
+  state.chatBusy = true;
+  pushMessage('user', text);
+  $('#adviser-log').append(adviserMessage('Adviser is typing…', 'muted'));
+  $('#adviser-log').scrollTop = $('#adviser-log').scrollHeight;
+  try {
+    const res = await api('/api/adviser/chat', { method: 'POST', body: { messages: chatPayload() } });
+    if (res.crisis) state.chat.push({ role: 'assistant', content: '', crisis: true });
+    state.chatBusy = false;
+    pushMessage('assistant', res.reply, true, { ...(res.offer ? { offer: res.offer } : {}), suggestions: res.suggestions ?? [] });
+  } catch (err) {
+    state.chatBusy = false;
+    pushMessage('assistant', `Sorry, I couldn't respond just now (${err.message}). If this is urgent, call NCMH 1553 or 911.`, false);
+  }
+}
+
+$('#adviser-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = $('#adviser-input');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
-  pushMessage('user', text);
-  $('#adviser-log').append(el('div', { class: 'msg msg-assistant muted', text: 'Adviser is typing…' }));
-  $('#adviser-log').scrollTop = $('#adviser-log').scrollHeight;
-  try {
-    const res = await api('/api/adviser/chat', { method: 'POST', body: { messages: state.chat.filter((m) => !m.crisis) } });
-    if (res.crisis) state.chat.push({ role: 'assistant', content: '', crisis: true });
-    pushMessage('assistant', res.reply);
-  } catch (err) {
-    pushMessage('assistant', `Sorry, I couldn't respond just now (${err.message}). If this is urgent, call NCMH 1553 or 911.`, false);
-  }
+  sendChat(text);
 });
 $('#adviser-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -602,33 +691,122 @@ $('#adviser-input').addEventListener('keydown', (e) => {
 });
 $('#adviser-clear').addEventListener('click', () => {
   state.chat = [];
+  state.privateDraft = null;
   saveChat();
   openAdviser();
 });
-$('#adviser-draft').addEventListener('click', async () => {
+
+async function draftPost() {
+  if (!hasStory()) return pushMessage('assistant', "Tell me a little about what happened first, and I'll turn it into a draft for you.", false);
   const btn = $('#adviser-draft');
   btn.disabled = true;
   btn.textContent = 'Drafting…';
   try {
-    const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: state.chat.filter((m) => !m.crisis) } });
+    const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: chatPayload() } });
     openComposer();
     $('#category-select').value = draft.category;
     $('#location-input').value = draft.location_tag;
     $('#narrative').value = draft.narrative;
     schedulePreview();
-    pushMessage('assistant', 'I put a draft in the post composer. Please read it over and change anything that isn\'t right. Nothing is shared until you press Post Anonymously.');
+    pushMessage('assistant', "I put a draft in the post composer. Please read it over and change anything that isn't right. Nothing is shared until you press Post Anonymously.");
   } catch (err) {
     pushMessage('assistant', err.message, false);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Draft a post';
   }
-});
+}
+$('#adviser-draft').addEventListener('click', draftPost);
+
+// ---------------------------------------------------------------------------------------------
+// Private report: the Adviser sends it to counselors only. Never on the feed or public counts.
+// ---------------------------------------------------------------------------------------------
+async function startPrivateReport() {
+  if (!hasStory()) {
+    return pushMessage('assistant', "I can send it privately to the counselors. First, tell me what happened: what, where, and how often. You don't need to use any names.", false);
+  }
+  const btn = $('#adviser-private');
+  btn.disabled = true;
+  try {
+    const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: chatPayload() } });
+    state.privateDraft = { ...draft, unlinked: false, error: '' };
+    renderChat();
+  } catch (err) {
+    pushMessage('assistant', err.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function privateReportCard(draft) {
+  const category = el('select', { 'aria-label': 'Category' }, ...state.meta.categories.map((c) => el('option', { value: c, text: c })));
+  category.value = draft.category;
+  const location = el('input', { type: 'text', list: 'location-list', maxlength: '60', 'aria-label': 'Campus location', value: draft.location_tag });
+  const narrative = el('textarea', { maxlength: '3000', 'aria-label': 'What happened', rows: '5' });
+  narrative.value = draft.narrative;
+  const unlinked = el('input', { type: 'checkbox' });
+  unlinked.checked = draft.unlinked;
+  const error = el('div', { class: 'alert alert-error', role: 'alert', hidden: !draft.error, text: draft.error });
+  const send = el('button', { class: 'btn btn-primary btn-sm', type: 'submit' }, 'Send to counselors');
+  const cancel = el('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, 'Cancel');
+
+  // Keep edits if the card re-renders.
+  const sync = () => Object.assign(state.privateDraft, { category: category.value, location_tag: location.value, narrative: narrative.value, unlinked: unlinked.checked });
+  [category, location, narrative, unlinked].forEach((n) => n.addEventListener('input', sync));
+  cancel.addEventListener('click', () => {
+    state.privateDraft = null;
+    pushMessage('assistant', "No problem, nothing was sent. I'm still here if you want to keep talking.", false);
+  });
+
+  const form = el('form', { class: 'private-card' },
+    el('div', { class: 'private-card-title' }, svgIcon('i-lock'), 'Send privately to counselors'),
+    el('p', { class: 'private-card-note', text: 'Only the Guidance team will see this. It never appears on the feed, and names and contact details are removed automatically. Please check the details below.' }),
+    el('div', { class: 'private-card-row' }, category, location),
+    narrative,
+    el('label', { class: 'ack' }, unlinked, el('span', { text: "Extra private: don't link this to my anonymous ID. I won't be able to check its status in My Reports." })),
+    error,
+    el('div', { class: 'adviser-actions' }, cancel, send),
+  );
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    sync();
+    send.disabled = true;
+    send.textContent = 'Sending…';
+    try {
+      const res = await api('/api/adviser/private-report', {
+        method: 'POST',
+        body: { secret: state.secret, category: category.value, location_tag: location.value, narrative: narrative.value, unlinked: unlinked.checked },
+      });
+      state.privateDraft = null;
+      if (res.crisis) state.chat.push({ role: 'assistant', content: '', crisis: true });
+      pushMessage('assistant', res.unlinked
+        ? "Sent. Only the Guidance team can see it, and it isn't linked to you in any way. Thank you for speaking up. That took courage. I'm still here if you want to talk."
+        : 'Sent. Only the Guidance team can see it, and it will never appear on the feed. You can check its status anytime in My Reports. Thank you for speaking up. That took courage.',
+      true, { suggestions: res.unlinked ? [] : [{ label: 'View My Reports', action: 'view_mine' }] });
+    } catch (err) {
+      state.privateDraft.error = err.message;
+      renderChat();
+    }
+  });
+  return form;
+}
+$('#adviser-private').addEventListener('click', startPrivateReport);
 
 // ---------------------------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------------------------
+// The fixed disclaimer footer wraps differently per width; keep the Adviser button and the end of
+// the feed clear of it by publishing its real height as --footer-h.
+function trackFooterHeight() {
+  const footer = $('#disclaimer');
+  if (!footer) return;
+  const update = () => document.documentElement.style.setProperty('--footer-h', `${Math.ceil(footer.getBoundingClientRect().height)}px`);
+  update();
+  if ('ResizeObserver' in window) new ResizeObserver(update).observe(footer);
+}
+
 async function boot() {
+  trackFooterHeight();
   state.secret = getSecret();
   try {
     state.topics = new Set(JSON.parse(storage.get('care.topics') || '[]'));
@@ -648,8 +826,9 @@ async function boot() {
   renderTopics();
   fillSelectors();
   renderChat();
+  initAdviserHello();
   loadIdentity().catch(() => {});
-  loadPatterns();
+  loadConcerns();
   showView(location.hash.slice(1) || 'feed', { push: false });
 }
 

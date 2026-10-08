@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { callClaude } from './llm.js';
 import { scrubText } from './pipeline/scrubber.js';
 import { scoreSeverity } from './pipeline/severity.js';
+import { offlineReply, suggestionsFor, detectTopics, categoryForTopics, isSmallTalk } from './adviserEngine.js';
 
 const HOTLINES = 'NCMH Crisis Hotline 1553 (toll-free, 24/7) or 0917-899-8727, emergency 911, or your campus Guidance Office';
 
@@ -12,7 +13,7 @@ const ADVISER_SYSTEM = `You are the C.A.R.E. Adviser inside C.A.R.E. Hub, an ano
 How you help:
 - Help students calm down and feel heard (validate feelings, simple grounding like slow breathing or 5-4-3-2-1).
 - Help them think through peer pressure and conflict, including scripts for saying no and ways to stay safe.
-- Help them organize messy thoughts into a clear account of what happened, where, when, and how often - and remind them that the "Draft a report" button can turn the conversation into a report form.
+- Help them organize messy thoughts into a clear account of what happened, where, when, and how often. They can report in two anonymous ways: "Draft a post" (appears on the feed with names removed) or "Send privately" (goes only to the Guidance team, never on the feed). Mention these when it fits.
 - Encourage connecting with trusted adults: guidance counselors, advisers, parents/guardians.
 
 Boundaries you always keep:
@@ -25,53 +26,48 @@ function lastUserText(messages) {
   return [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 }
 
+const OFFERS = new Set(['scripts', 'grounding', 'report_options']);
+
 export function normalizeHistory(messages) {
   if (!Array.isArray(messages)) return [];
   const cleaned = messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
     .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
+    .map((m) => ({
+      role: m.role,
+      content: m.content.slice(0, 2000),
+      // What the adviser last offered, so a short "yes"/"oo" can be understood offline.
+      ...(m.role === 'assistant' && OFFERS.has(m.offer) ? { offer: m.offer } : {}),
+    }));
   // The API requires the conversation to start with a user turn and alternate roles.
   while (cleaned.length && cleaned[0].role !== 'user') cleaned.shift();
   const merged = [];
   for (const m of cleaned) {
-    if (merged.length && merged.at(-1).role === m.role) merged.at(-1).content += `\n${m.content}`;
-    else merged.push({ ...m });
+    if (merged.length && merged.at(-1).role === m.role) {
+      merged.at(-1).content += `
+${m.content}`;
+      if (m.offer) merged.at(-1).offer = m.offer;
+    } else merged.push({ ...m });
   }
   return merged;
 }
 
-function offlineReply(text) {
-  const t = text.toLowerCase();
-  if (/\b(pressur|dare|forced|vape|drink|smoke|cutting class|cheat)/.test(t)) {
-    return 'That sounds like a lot of pressure, and it makes sense that you feel torn. You never owe anyone a "yes" - a short, firm line like "Nah, not my thing" and walking toward other people usually works. If the pressure keeps coming, a guidance counselor can help without you being labeled a snitch. Want help planning what to say next time?';
-  }
-  if (/\b(anxious|anxiety|panic|overwhelm|stress|scared|nervous|can'?t breathe)/.test(t)) {
-    return 'I\'m here with you. Let\'s slow things down: breathe in for 4, hold for 4, out for 6 - try it three times. Then name 5 things you can see and 4 you can hear. When you feel a little steadier, tell me what\'s been weighing on you most.';
-  }
-  if (/\b(bully|bullied|teas|mock|laugh|name|photo|post|group ?chat|gc|harass|insult)/.test(t)) {
-    return 'I\'m sorry you\'re dealing with this - it is not your fault. It can help to write down what happened, where, when, and how often, without names. If photos or posts are involved, avoid sharing them further; a counselor can handle that safely. When you\'re ready, tap "Draft a report" and I\'ll organize this into a report for you.';
-  }
-  if (/\b(report|tell someone|what do i do|what should i do)/.test(t)) {
-    return 'You have options. You can post anonymously here (names are removed automatically), or talk directly to your Guidance Office. Serious reports go privately to counselors and never appear on the public feed. Want me to help turn what you\'ve told me into a draft?';
-  }
-  return 'Thank you for sharing that with me. Take your time - what happened, and how are you feeling about it right now? I can help you sort your thoughts, think through next steps, or put together a report draft.';
-}
-
 export async function adviserReply(messages, { useLlm = true } = {}) {
   const history = normalizeHistory(messages);
-  if (!history.length) return { reply: 'Hi, I\'m the C.A.R.E. Adviser. What\'s on your mind today?', crisis: false, source: 'offline' };
+  if (!history.length) return { reply: "Hi, I'm the C.A.R.E. Adviser. What's on your mind today?", crisis: false, source: 'offline', suggestions: [] };
 
+  const offline = offlineReply(history);
   const latest = lastUserText(history);
   const { crisis, score } = scoreSeverity(latest);
-  const urgent = crisis || score >= 5;
+  const urgent = offline.crisis || crisis || score >= 5;
 
-  const llmReply = useLlm ? await callClaude({ system: ADVISER_SYSTEM, messages: history, effort: 'low', maxTokens: 4000 }) : null;
-  let reply = llmReply ?? offlineReply(latest);
-  if (urgent && !llmReply) {
-    reply = 'I\'m really glad you told me, and I\'m worried about your safety. You don\'t have to handle this alone - please reach out right now: NCMH Crisis Hotline 1553 or 0917-899-8727, or 911 if you\'re in immediate danger. If you can, go to a trusted adult or your Guidance Office now. I\'m still here to talk.';
+  // Claude never sees the `offer` bookkeeping field.
+  const apiHistory = history.map(({ role, content }) => ({ role, content }));
+  const llmReply = useLlm ? await callClaude({ system: ADVISER_SYSTEM, messages: apiHistory, effort: 'low', maxTokens: 4000 }) : null;
+  if (llmReply) {
+    return { reply: llmReply, crisis: urgent, source: 'claude', offer: null, suggestions: urgent ? offline.suggestions : suggestionsFor(history) };
   }
-  return { reply, crisis: urgent, source: llmReply ? 'claude' : 'offline' };
+  return { reply: offline.reply, crisis: urgent, source: 'offline', offer: offline.offer, suggestions: offline.suggestions, intent: offline.intent };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -138,10 +134,11 @@ export async function buildReportDraft(messages, { useLlm = true } = {}) {
   }
 
   const lower = userText.toLowerCase();
+  const story = history.filter((m) => m.role === 'user' && !isSmallTalk(m.content)).map((m) => m.content.trim()).join(' ') || userText;
   return {
-    category: guessCategory(lower),
+    category: categoryForTopics(detectTopics(history)) ?? guessCategory(lower),
     location_tag: LOCATION_HINTS.find(([re]) => re.test(lower))?.[1] ?? 'Classroom',
-    narrative: scrubText(userText).text.slice(0, config.maxNarrativeLength),
+    narrative: scrubText(story).text.slice(0, config.maxNarrativeLength),
     source: 'offline',
   };
 }

@@ -71,14 +71,29 @@ export function adminRouter(db) {
       notes: parse(p.moderation_notes),
       cluster_id: p.cluster_id,
       has_attachment: Boolean(p.has_attachment),
+      private_report: p.visibility === 'private',
       created_at: p.created_at,
     });
 
-    const priority = db.prepare(`SELECT p.*, e.summary_brief, e.sent_to, e.dispatched_at FROM posts p
+    // Structured fields for the counselor queue (the stored summary_brief stays as the audit text).
+    const priority = db.prepare(`SELECT p.*, e.summary_brief, e.sent_to, e.dispatched_at,
+                                        c.cluster_title, c.report_count AS cluster_reports, c.first_reported_at AS cluster_first, c.status AS cluster_status
+                                 FROM posts p
                                  LEFT JOIN escalations e ON e.post_id = p.id
+                                 LEFT JOIN incident_clusters c ON c.id = p.cluster_id
                                  WHERE p.status = 'flagged_admin'
                                  ORDER BY p.severity_score DESC, p.created_at DESC LIMIT 100`).all()
-      .map((p) => ({ ...shapePost(p), summary: p.summary_brief, sent_to: p.sent_to, dispatched_at: p.dispatched_at }));
+      .map((p) => {
+        const post = shapePost(p);
+        return {
+          ...post,
+          summary: p.summary_brief,
+          sent_to: p.sent_to,
+          dispatched_at: p.dispatched_at,
+          wellbeing_risk: post.indicators.includes('self-harm or suicide risk'),
+          cluster: p.cluster_id ? { id: p.cluster_id, title: p.cluster_title, report_count: p.cluster_reports, first_reported_at: p.cluster_first, status: p.cluster_status } : null,
+        };
+      });
 
     const moderation = db.prepare(`SELECT * FROM posts WHERE status = 'pending_moderation' ORDER BY created_at ASC LIMIT 100`).all().map(shapePost);
 
