@@ -121,25 +121,40 @@ function svgIcon(id, cls = 'icon') {
 }
 const phoneIcon = () => svgIcon('i-phone');
 function helplineRow(c) {
-  const dialable = /^[\d-]+$/.test(c.number);
+  // Placeholders (09XX-XXX-XXXX, Local XXXX) are never dialable, so a tap can't call a random number.
+  const dialable = !c.placeholder && /^[\d-]+$/.test(c.number);
   return el('div', { class: 'helpline' },
-    el('div', {}, el('strong', { text: c.label.replace(/\s*\(demo placeholder\)/i, '') }), el('small', { text: c.note })),
+    el('div', {}, el('strong', { text: c.label }), el('small', { text: c.note })),
     dialable
       ? el('a', { class: 'call-btn', href: `tel:${c.number.replace(/-/g, '')}`, 'aria-label': `Call ${c.label} ${c.number}` }, phoneIcon(), c.number)
-      : el('span', { class: 'pill', text: c.number }),
+      : el('span', { class: 'pill', title: c.placeholder ? 'Placeholder - the real number will be added by your school' : null, text: c.number }),
   );
 }
+
+const CONTACT_GROUPS = [
+  ['crisis', 'Talk to someone now · 24/7'],
+  ['campus', 'On campus'],
+  ['community', 'In your community'],
+];
+
 function renderHelplines() {
   const all = state.meta.emergencyContacts;
+  // Sidebar: the two always-available lines plus the counselors; the full list is one tap away.
   const compact = [
     all.find((c) => c.number === '1553'),
-    all.find((c) => /campus security/i.test(c.label)),
+    all.find((c) => /guidance/i.test(c.label)),
     all.find((c) => c.number === '911'),
   ].filter(Boolean);
   document.querySelectorAll('[data-helplines]').forEach((node) => {
-    const list = node.dataset.helplines === 'all' ? all : compact;
-    node.replaceChildren(...list.map(helplineRow),
-      ...(node.dataset.helplines === 'all' ? [] : [el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-view-link': 'hotlines' }, 'All hotlines')]));
+    if (node.dataset.helplines === 'all') {
+      node.replaceChildren(...CONTACT_GROUPS.map(([key, title]) => {
+        const rows = all.filter((c) => (c.group ?? 'crisis') === key);
+        return rows.length ? el('section', { class: 'helpline-group' }, el('h2', { class: 'helpline-group-title', text: title }), ...rows.map(helplineRow)) : null;
+      }).filter(Boolean));
+      return;
+    }
+    node.replaceChildren(...compact.map(helplineRow),
+      el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-view-link': 'hotlines' }, 'See all contacts'));
   });
 }
 
@@ -501,7 +516,7 @@ function crisisCard() {
 }
 
 const STATUS_COPY = {
-  published: ['Posted anonymously', 'Your post is live on the feed with identifying details removed.'],
+  published: ['Posted anonymously', 'Your post is live on the feed with identifying details removed. A summary was also shared with the Guidance team.'],
   flagged_admin: ['Sent privately to counselors', 'This looked urgent, so it went straight to the counselor priority queue instead of the public feed. Pending counselor review.'],
   pending_moderation: ['Waiting for review', 'A counselor will check this before it can be published. This happens when a post may still identify someone or reads like a call-out.'],
 };
@@ -597,12 +612,35 @@ function initAdviserHello() {
 function adviserMessage(text, extraClass = '') {
   return el('div', { class: 'msg-row msg-row-assistant' },
     el('img', { class: 'msg-avatar', src: '/img/care-adviser-chibi.png', alt: '', width: '32', height: '32' }),
-    el('div', { class: `msg msg-assistant ${extraClass}`.trim(), text }),
+    el('div', { class: `msg msg-assistant ${extraClass}`.trim() }, chatFormatting(text)),
   );
 }
 
+// AI replies sometimes arrive with Markdown (**bold**, *italic*, "- " lists). Turn just those into
+// formatting using DOM nodes and textContent - never innerHTML - so a reply can't inject markup.
+const INLINE_MD = /\*\*(\S(?:[^*\n]*?\S)?)\*\*|__(\S(?:[^_\n]*?\S)?)__|(?<![\w*])\*(\S(?:[^*\n]*?\S)?)\*(?![\w*])|(?<![\w_])_(\S(?:[^_\n]*?\S)?)_(?![\w_])/g;
+
+function chatFormatting(text) {
+  const frag = document.createDocumentFragment();
+  String(text ?? '').split('\n').forEach((rawLine, i) => {
+    if (i > 0) frag.append('\n');
+    const line = rawLine
+      .replace(/^\s{0,3}#{1,6}\s+/, '')     // "## Heading" -> "Heading"
+      .replace(/^(\s*)[-*+]\s+/, '$1• ');    // "- item" / "* item" -> "• item"
+    let last = 0;
+    for (const m of line.matchAll(INLINE_MD)) {
+      if (m.index > last) frag.append(line.slice(last, m.index));
+      const bold = m[1] ?? m[2];
+      frag.append(el(bold !== undefined ? 'strong' : 'em', { text: bold ?? m[3] ?? m[4] }));
+      last = m.index + m[0].length;
+    }
+    if (last < line.length) frag.append(line.slice(last));
+  });
+  return frag;
+}
+
 const WELCOME = {
-  content: "Hi, I'm the C.A.R.E. Adviser. I'm here to listen and help you think things through. You don't need to share any names. What's on your mind?",
+  content: "Hi, I'm the C.A.R.E. Adviser. I'm here to listen and help you think things through. You don't need to share any names. Our chat isn't saved, but if you choose to post or report something, a summary with names removed is always shared with the Guidance team so someone can help. What's on your mind?",
   suggestions: [
     { label: 'Something happened at school', action: 'reply', text: 'Something happened at school' },
     { label: "I'm feeling stressed", action: 'reply', text: "I'm feeling stressed" },

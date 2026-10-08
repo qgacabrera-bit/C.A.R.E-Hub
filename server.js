@@ -58,5 +58,5 @@ app.listen(config.port, () => {
   const llm = llmStatus();
   console.log(`C.A.R.E. Hub running at http://localhost:${config.port}`);
   console.log(`  Counselor portal: http://localhost:${config.port}/admin  (passcode: ${config.usingDemoPasscode ? 'counselor-demo [demo default]' : 'set via ADMIN_PASSCODE'})`);
-  console.log(`  AI engine: ${llm.enabled ? `Claude (${llm.model}) with offline safety rules` : `offline rules only (${llm.reason})`}`);
+  console.log(`  AI engine: ${llm.enabled ? `${llm.provider === 'gemini' ? 'Gemini' : 'Claude'} (${llm.model}) with offline safety rules` : `offline rules only (${llm.reason})`}`);
 });

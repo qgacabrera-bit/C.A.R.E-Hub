@@ -582,3 +582,20 @@ details summary { cursor: pointer; color: var(--brand); font-weight: 600; font-s
 .queue-account .post-body { margin-top: var(--space-xs); }
 .queue-foot { margin: 0; font-size: 12px; color: var(--muted); }
 .log-summary { margin: 6px 0 0; color: var(--text-2); line-height: 1.5; }
+
+/* ---------- "Need someone to talk to?" contact groups ---------- */
+.helpline-group + .helpline-group { margin-top: var(--space-lg); }
+.helpline-group-title {
+  margin: 0 0 var(--space-2xs); font: var(--fw-medium) var(--fs-label)/1.4 var(--font);
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ---------- "Shared with the Guidance team" notice in the composer ---------- */
+.share-note {
+  display: flex; align-items: flex-start; gap: var(--space-xs); margin: 0;
+  padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
+  font-size: 13px; line-height: 1.5; color: var(--text-2);
+}
+.share-note .icon { width: 16px; height: 16px; margin-top: 2px; color: var(--muted); }
+.msg-assistant strong { font-weight: var(--fw-bold); }
+.msg-assistant em { font-style: italic; }

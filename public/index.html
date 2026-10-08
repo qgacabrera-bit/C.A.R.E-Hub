@@ -55,7 +55,7 @@
         <button class="nav-link" type="button" data-view="feed"><svg class="icon"><use href="#i-home"/></svg>Campus Feed</button>
         <button class="nav-link" type="button" data-view="mine"><svg class="icon"><use href="#i-file"/></svg>My Reports</button>
         <button class="nav-link" type="button" data-view="guidelines"><svg class="icon"><use href="#i-shield"/></svg>Guidelines &amp; Privacy</button>
-        <button class="nav-link" type="button" data-view="hotlines"><svg class="icon"><use href="#i-heart"/></svg>Crisis Hotlines</button>
+        <button class="nav-link" type="button" data-view="hotlines"><svg class="icon"><use href="#i-heart"/></svg>Need someone to talk to?</button>
       </nav>
 
       <section class="card" aria-labelledby="session-title">
@@ -77,7 +77,7 @@
       </section>
 
       <div class="rail-mobile-only">
-        <section class="card"><h3 class="card-title">24/7 Support</h3><div data-helplines></div></section>
+        <section class="card"><h3 class="card-title">Need someone to talk to?</h3><div data-helplines></div></section>
         <section class="card"><h3 class="card-title">Concerns Raised</h3><div data-concerns></div></section>
       </div>
     </aside>
@@ -129,6 +129,8 @@
               <div class="preview-flags" id="preview-flags"></div>
             </div>
 
+            <p class="share-note"><svg class="icon"><use href="#i-lock"/></svg><span>Every post is also shared with the Guidance team as a summary with names removed, so someone can follow up if needed.</span></p>
+
             <label class="ack"><input type="checkbox" id="ack"> <span>I described what happened without naming or accusing anyone, and I'll follow the <a href="#" data-view-link="guidelines">community standards</a>.</span></label>
 
             <div id="form-error" class="alert alert-error" role="alert" hidden></div>
@@ -169,6 +171,7 @@
             <ul>
               <li>No account and no IP address are stored. Your "Student #" handle comes from a random key kept only in this browser.</li>
               <li>Names, phone numbers, emails, student IDs and social handles are replaced with tags like [Student A] before anything is saved.</li>
+              <li>A summary of every concern you share, with names removed, always goes to the Guidance team, whether it is posted on the feed or sent privately. Chats with the C.A.R.E. Adviser are not saved unless you choose to post or send them.</li>
               <li>Urgent reports (threats, harassment, self-harm) skip the public feed and go privately to counselors.</li>
               <li>Photos are only ever seen by counselors, with location metadata removed.</li>
               <li>Similar reports are grouped into concerns so counselors can act. Concerns show counts, never your words.</li>
@@ -183,7 +186,7 @@
 
       <!-- HOTLINES -->
       <section data-panel="hotlines" hidden>
-        <div class="page-head"><h1>Crisis Hotlines</h1><p>If you or someone else is in immediate danger, call 911. You can also talk to any trusted adult nearby.</p></div>
+        <div class="page-head"><h1>Need someone to talk to?</h1><p>You don't have to handle things alone. If you or someone else is in immediate danger, call 911. You can also talk to any trusted adult nearby.</p></div>
         <div class="card" data-helplines="all"></div>
       </section>
     </main>
@@ -191,7 +194,7 @@
     <!-- RIGHT SIDEBAR -->
     <aside class="rail rail-right" aria-label="Support and concerns raised">
       <section class="card" aria-labelledby="support-title">
-        <h3 class="card-title" id="support-title">24/7 Support</h3>
+        <h3 class="card-title" id="support-title">Need someone to talk to?</h3>
         <div data-helplines></div>
       </section>
       <section class="card" aria-labelledby="concerns-title">

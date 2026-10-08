@@ -9,7 +9,7 @@ import { scoreSeverity } from './pipeline/severity.js';
 
 const CALL_1553 = { label: 'Call 1553 now', action: 'call', number: '1553' };
 const CALL_911 = { label: 'Call 911', action: 'call', number: '911' };
-const HOTLINES = { label: 'All hotlines', action: 'hotlines' };
+const HOTLINES = { label: 'See all contacts', action: 'hotlines' };
 const PRIVATE = { label: 'Send privately to counselors', action: 'private_report' };
 const DRAFT = { label: 'Draft an anonymous post', action: 'draft_post' };
 const say = (label, text = label) => ({ label, action: 'reply', text });
@@ -32,7 +32,7 @@ const INTENTS = [
     re: /\b(gun|baril|knife|kutsilyo|weapon|bomb|going to (?:kill|shoot|stab|hurt) (?:me|us|everyone)|threaten(?:ed|ing)? to (?:kill|hurt)|papatayin|(?:someone|they|he|she) (?:is|are) (?:following|hurting) me|i'?m not safe|not safe right now|in danger)\b/i,
     crisis: true,
     replies: [
-      "Your safety comes first. If you're in danger right now, call 911 or go straight to the nearest teacher, guard, or office where other people are. Stay where adults can see you. When you're safe, I can help you send this privately to the counselors so they can act on it.",
+      "Your safety comes first. If you're in danger right now, call 911 or go straight to campus security, a teacher, or any office where other people are. Stay where adults can see you. As soon as you can, tell your Guidance Office. I can send this to them privately right now. If you need to talk to someone while you wait, the NCMH Crisis Hotline 1553 is free and open 24/7.",
     ],
     suggestions: [CALL_911, PRIVATE, HOTLINES],
     incident: true,
@@ -42,7 +42,7 @@ const INTENTS = [
     re: /\b((?:my|our) (?:dad|mom|father|mother|stepdad|stepmom|step-?parent|parents?|guardian|tito|tita|lolo|lola|kuya|ate) (?:hits?|beats?|hurts?|hurt|slaps?|kicks?|punche[sd])(?: me)?|abuse[sd]? at home|hurt(?:s|ing)? me at home|sinasaktan ako|binubugbog|bugbog sa bahay|scared to go home|afraid to go home|takot (?:ako )?umuwi)\b/i,
     crisis: true,
     replies: [
-      "I'm so sorry. No one is allowed to hurt you, at home or anywhere, and it is not your fault. If you're in danger right now, call 911. Please also tell a trusted adult you feel safe with, like a teacher or your Guidance Office. They can help keep you safe. I can also send this privately to the counselors for you.",
+      "I'm so sorry. No one is allowed to hurt you, at home or anywhere, and it is not your fault. If you're in danger right now, call 911. Please tell your Guidance Office. They can help keep you safe and contact the right people. Your barangay VAWC desk also helps young people facing violence at home. You can call the NCMH Crisis Hotline 1553 anytime, 24/7. I can send this privately to the counselors for you now.",
     ],
     suggestions: [PRIVATE, CALL_911, HOTLINES],
     incident: true,
@@ -51,7 +51,7 @@ const INTENTS = [
     id: 'sexual_harassment',
     re: /\b(touched me|touching me|groped|grop(?:e|ing)|sexual(?:ly)?|send (?:me )?nudes|nudes?|private (?:photos?|pics?|videos?)|intimate (?:photos?|pics?)|upskirt|hinipuan|hinihipuan|binastos|bastos|manyak|catcall(?:ed|ing)?)\b/i,
     replies: [
-      "Thank you for trusting me with this. What happened is not your fault. If photos or videos are involved, don't forward or repost them, even as proof. Counselors can handle evidence safely. This is the kind of thing the Guidance team should know about, and I can send it to them privately so it never appears on the feed.",
+      "Thank you for trusting me with this. What happened is not your fault. If photos or videos are involved, don't forward or repost them, even as proof. Counselors can handle evidence safely. Please let your Guidance Office know; I can send it to them privately so it never appears on the feed. If you're in danger, call 911 or go to campus security, and your barangay VAWC desk can also help. If this is weighing on you, the NCMH Crisis Hotline 1553 is free and open 24/7.",
     ],
     suggestions: [PRIVATE, say('Can I stay anonymous?', 'Will anyone know it was me?'), HOTLINES],
     incident: true,
@@ -196,6 +196,12 @@ const INTENTS = [
 
   // ---- Small talk ------------------------------------------------------------------------------
   {
+    // "Who else can I talk to?" - local support, always alongside the Guidance Office.
+    id: 'local_support',
+    re: /\b(who else can i (?:talk|go) to|who (?:can|could) i (?:talk|go) to|someone else i can talk to|student council|ssg|sslg|class adviser|adviser ko|sangguniang kabataan|sk)\b/i,
+    replies: [''],
+  },
+  {
     // Conversation openers ("something happened", the welcome chip) - invite the story.
     id: 'opener',
     re: /^(?:something (?:bad )?happened(?: at school| today)?|may nangyari(?: sa school)?|i (?:just )?(?:want|need) to talk|can i talk to you|i need help)[\s!.?]*$/i,
@@ -237,7 +243,7 @@ const PRIORITY = [
   'self_harm', 'immediate_danger', 'abuse_home', 'sexual_harassment', 'retaliation',
   'cyberbullying', 'physical', 'teacher', 'verbal_social', 'campus_safety', 'peer_pressure',
   'anxiety', 'sad_lonely', 'stress',
-  'privacy', 'want_report', 'talk_human', 'about_bot',
+  'privacy', 'local_support', 'want_report', 'talk_human', 'about_bot',
   'opener', 'greeting', 'thanks', 'bye',
 ];
 INTENTS.sort((a, b) => PRIORITY.indexOf(a.id) - PRIORITY.indexOf(b.id));
@@ -305,9 +311,43 @@ export function categoryForTopics(topics) {
 /** Small talk and platform questions are left out of report drafts. */
 export function isSmallTalk(text) {
   const intent = matchIntent(text);
-  return Boolean(intent && ['opener', 'greeting', 'thanks', 'bye', 'privacy', 'about_bot', 'want_report', 'talk_human'].includes(intent.id))
+  return Boolean(intent && ['opener', 'greeting', 'thanks', 'bye', 'privacy', 'about_bot', 'want_report', 'talk_human', 'local_support'].includes(intent.id))
     || AFFIRM.test(text.trim()) || NEGATE.test(text.trim());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Support pathways
+//   Serious concerns -> always the Guidance Office + the relevant authority + the crisis hotline.
+//   Low-severity concerns -> may also suggest local support (class adviser, student council, SK),
+//   always in addition to the Guidance Office, never instead of it.
+// ---------------------------------------------------------------------------------------------
+const SERIOUS_INTENTS = new Set(['self_harm', 'immediate_danger', 'abuse_home', 'sexual_harassment', 'physical', 'teacher']);
+const LOW_SEVERITY_INTENTS = new Set(['verbal_social', 'peer_pressure', 'stress', 'sad_lonely', 'anxiety', 'cyberbullying', 'campus_safety']);
+const LOCAL = say('Who else can I talk to?');
+
+const FORMAL_CHANNELS_NOTE = "Please make sure your Guidance Office knows about this - I can send it to them privately. If you're in danger, call 911 or go to campus security. And if you need to talk to someone right now, the NCMH Crisis Hotline 1553 is free and open 24/7.";
+
+/** True when a message or intent needs the formal channels (not just local support). */
+export function isSeriousConcern(text, intentId) {
+  return SERIOUS_INTENTS.has(intentId) || scoreSeverity(text).score >= 4;
+}
+
+/** Make sure a reply to a serious concern names the Guidance Office, an authority and the hotline. */
+export function ensureFormalChannels(reply) {
+  const hasGuidance = /guidance/i.test(reply);
+  const hasAuthority = /\b911\b|campus security|vawc|police|principal/i.test(reply);
+  const hasHotline = /\b1553\b/.test(reply);
+  return hasGuidance && hasAuthority && hasHotline ? reply : `${reply}\n\n${FORMAL_CHANNELS_NOTE}`;
+}
+
+function seriousSuggestions(base) {
+  const list = [...base];
+  for (const chip of [PRIVATE, CALL_1553, HOTLINES]) if (!list.some((s) => s.label === chip.label)) list.push(chip);
+  return list.slice(0, 4);
+}
+
+const LOCAL_SUPPORT_REPLY = "Besides the Guidance Office, there are other people who can help with everyday things:\n• Your class adviser\n• A student council (SSG / SSLG) officer you trust\n• A teacher you feel comfortable with\n• Your barangay's Sangguniang Kabataan (SK) for youth programs and community support\nThey're great for support alongside the counselors, not instead of them. If things ever feel serious or unsafe, the Guidance Office is always the place to go.";
+const LOCAL_SUPPORT_SERIOUS_REPLY = "For what you've told me, please start with your Guidance Office. They're trained for this and can bring in the right people. I can send it to them privately. If you're in danger, call 911 or go to campus security, and the NCMH Crisis Hotline 1553 is free and open 24/7. A class adviser or student council officer you trust can be extra support too, but in addition to the counselors, not instead of them.";
 
 /**
  * Offline reply for the latest student message. `history` is the normalized conversation; the
@@ -320,47 +360,67 @@ export function offlineReply(history) {
 
   const intent = matchIntent(latest);
   const isShort = latest.length <= 25;
+  const serious = isSeriousConcern(latest, intent?.id);
 
   // Safety intents always win, even over a pending "yes/no".
   if (intent?.crisis) {
-    return { reply: pickVariant(intent.replies, history), crisis: true, intent: intent.id, offer: null, suggestions: intent.suggestions ?? [] };
+    return {
+      reply: ensureFormalChannels(pickVariant(intent.replies, history)),
+      crisis: true, serious: true, intent: intent.id, offer: null, suggestions: seriousSuggestions(intent.suggestions ?? []),
+    };
+  }
+
+  if (intent?.id === 'local_support') {
+    const earlierSerious = history.some((m) => m.role === 'user' && isSeriousConcern(m.content, matchIntent(m.content)?.id));
+    return earlierSerious
+      ? { reply: LOCAL_SUPPORT_SERIOUS_REPLY, crisis: false, serious: true, intent: 'local_support', offer: null, suggestions: [PRIVATE, CALL_1553, HOTLINES] }
+      : { reply: LOCAL_SUPPORT_REPLY, crisis: false, serious: false, intent: 'local_support', offer: null, suggestions: [HOTLINES, PRIVATE] };
   }
 
   if (isShort && lastOffer && AFFIRM.test(latest)) {
     const f = FOLLOW_UPS[lastOffer];
-    return { reply: f.reply, crisis: false, intent: `follow_up:${lastOffer}`, offer: null, suggestions: f.suggestions };
+    return { reply: f.reply, crisis: false, serious: false, intent: `follow_up:${lastOffer}`, offer: null, suggestions: f.suggestions };
   }
   if (isShort && NEGATE.test(latest)) {
     return {
       reply: "That's okay. We can just talk. What's been on your mind the most?",
-      crisis: false, intent: 'decline', offer: null, suggestions: [],
+      crisis: false, serious: false, intent: 'decline', offer: null, suggestions: [],
     };
   }
 
   if (intent) {
     let suggestions = intent.suggestions ?? [];
-    // Incidents get report options, unless the same options were just offered.
+    // Incidents get report options.
     if (intent.offer === 'report_options') {
       suggestions = [PRIVATE, DRAFT, say('Tell you more first', 'I want to tell you more first')];
     }
-    return { reply: pickVariant(intent.replies, history), crisis: false, intent: intent.id, offer: intent.offer ?? null, suggestions };
+    let reply = pickVariant(intent.replies, history);
+    if (serious) {
+      reply = ensureFormalChannels(reply);
+      suggestions = seriousSuggestions(suggestions);
+    } else if (LOW_SEVERITY_INTENTS.has(intent.id)) {
+      suggestions = [...suggestions, LOCAL].slice(0, 4);
+    }
+    return { reply, crisis: false, serious, intent: intent.id, offer: intent.offer ?? null, suggestions };
   }
 
   // Nothing matched: reflect, and if they described an incident earlier, keep the report door open.
   const topics = detectTopics(history);
   const hadIncident = topics.some(isIncidentTopic);
   return {
-    reply: pickVariant(FALLBACKS, history),
+    reply: serious ? ensureFormalChannels(pickVariant(FALLBACKS, history)) : pickVariant(FALLBACKS, history),
     crisis: false,
+    serious,
     intent: 'fallback',
     offer: hadIncident ? 'report_options' : null,
-    suggestions: hadIncident ? [PRIVATE, DRAFT] : [],
+    suggestions: serious ? seriousSuggestions([]) : hadIncident ? [PRIVATE, DRAFT] : [],
   };
 }
 
-/** Suggestions only (used alongside Claude's replies, which write their own text). */
+/** Suggestions only (used alongside AI replies, which write their own text). */
 export function suggestionsFor(history) {
   const r = offlineReply(history);
-  // "reply" chips answer a question Claude may not have asked; keep only action chips.
-  return r.suggestions.filter((s) => s.action !== 'reply');
+  // "reply" chips answer a question the AI may not have asked; keep action chips and the
+  // "Who else can I talk to?" chip, which always makes sense.
+  return r.suggestions.filter((s) => s.action !== 'reply' || s === LOCAL);
 }

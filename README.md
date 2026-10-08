@@ -21,8 +21,10 @@ npm run seed         # wipe and reload the synthetic dataset
 
 Requires Node.js 22.13+ (uses the built-in `node:sqlite`; no native builds).
 
-### Optional: Claude-assisted review
-Set `ANTHROPIC_API_KEY` to have Claude (`claude-opus-5-5`) review sanitization, add context to urgency scores, power the Adviser chat, and draft reports. Without a key, the app runs entirely on its deterministic offline engine. If the key is rejected, the app falls back to that engine automatically.
+### Optional: AI-assisted review (Gemini or Claude)
+Set `GEMINI_API_KEY` (Google Gemini, default model `gemini-flash-latest`) or `ANTHROPIC_API_KEY` (Claude, `claude-opus-5-5`) to have an AI model double-check sanitization, add context to urgency scores, power the Adviser chat, and draft reports. With both set, Gemini is used unless `CARE_LLM_PROVIDER=anthropic`. Without a key, the app runs entirely on its deterministic offline engine; if a key is rejected or a request fails, it falls back to that engine automatically. Student messages are scrubbed of names, numbers and handles before anything is sent to the AI provider.
+
+> **Gemini free tier and student data:** on Gemini's free (unpaid) tier, Google's terms allow prompts and responses to be used to improve its products and to be read by human reviewers. For anything beyond synthetic demo data, use an API key from a Google Cloud project with billing enabled (paid tier), where that does not apply. Check the current [Gemini API terms](https://ai.google.dev/gemini-api/terms) before a pilot.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -30,8 +32,12 @@ Set `ANTHROPIC_API_KEY` to have Claude (`claude-opus-5-5`) review sanitization, 
 | `ADMIN_PASSCODE` | `counselor-demo` | Counselor portal passcode. **Required (12+ chars) when `NODE_ENV=production`**; the server refuses to start otherwise |
 | `NODE_ENV` | – | `production` enables the passcode guard and hides the demo-passcode hint |
 | `TRUST_PROXY` | `0` | Set to `1` behind a hosting proxy so rate limits apply per visitor |
-| `CARE_LLM` | `auto` | `auto` uses Claude if credentials exist; `off` forces offline |
-| `ANTHROPIC_API_KEY` | – | Enables Claude features |
+| `CARE_LLM` | `auto` | `auto` uses an AI model when a key exists; `off` forces offline |
+| `CARE_LLM_PROVIDER` | `auto` | `gemini`, `anthropic`, or `auto` (Gemini first) |
+| `GEMINI_API_KEY` | – | Enables Gemini (`GOOGLE_API_KEY` also works) |
+| `GEMINI_MODEL` | `gemini-flash-latest` | Pin a specific Gemini model |
+| `GEMINI_FALLBACK_MODEL` | `gemini-flash-lite-latest` | Tried when the main model is overloaded (503); empty disables |
+| `ANTHROPIC_API_KEY` | – | Enables Claude |
 | `RETAIN_RAW_CONTENT` | `false` | Raw narratives are purged after sanitization unless `true` |
 | `CARE_DB_PATH` | `data/care-hub.db` | SQLite file |
 | `CARE_SEED` | `true` | `false` skips auto-seeding an empty DB |
@@ -50,7 +56,7 @@ To put it online elsewhere, deploy the repository to any Node or Docker host (Ra
 | Start | `npm start` |
 | Health check | `GET /healthz` |
 | Env (required) | `NODE_ENV=production`, `ADMIN_PASSCODE=<12+ chars>`, `TRUST_PROXY=1` |
-| Env (optional) | `ANTHROPIC_API_KEY`, `CARE_LLM` |
+| Env (optional) | `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`, `CARE_LLM`, `CARE_LLM_PROVIDER` |
 | Storage | Mount a **persistent disk** and point `CARE_DB_PATH` at it (Docker: `/app/data`). Without one, reports are lost on every redeploy |
 
 ```bash
@@ -104,7 +110,7 @@ Student browser ──► POST /api/posts
 | No retaliation facilitation | No comments, only four supportive reactions (one per student per post). Call-out language is held for counselor moderation. The Adviser refuses to help plan exposure or retaliation. |
 | No real PII in demo | The seed data is synthetic. A demo banner is shown. Raw narratives are purged after processing. No IPs are stored (rate limiting uses salted in-memory hashes). Author identity is a SHA-256 hash of a random browser-held secret. Attachments are JPEG/PNG only, with EXIF/text metadata stripped, and visible to counselors only. |
 | No policy/legal substitution | A persistent footer disclaimer appears on every page, student and counselor. |
-| Emergency safeguards | A one-tap "Helpline 1553" pill in the sticky top bar (every screen size), plus a 24/7 Support card in the sidebar and a Crisis Hotlines page. Self-harm signals in posts or chat show crisis resources immediately, are scored 5/5, are routed privately, and are never clustered. |
+| Emergency safeguards | A one-tap "Helpline 1553" pill in the sticky top bar (every screen size), plus a "Need someone to talk to?" card in the sidebar and a full contacts page (crisis lines, campus offices, student council, SK and the barangay VAWC desk; local numbers are placeholders to replace before a pilot). Self-harm signals in posts or chat show crisis resources immediately, are scored 5/5, are routed privately, and are never clustered. |
 
 ## Design decisions to review before a pilot
 * **Free-text locations.** The composer's location field accepts typed text with suggestions. Known zones and aliases ("chem lab", "canteen", "gc") collapse to canonical names so clustering still works. Anything else is run through the PII scrubber, so a location like "Mr. Cruz's room" can't carry a name.

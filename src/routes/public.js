@@ -83,7 +83,7 @@ function followUpFor(post) {
     case 'published':
       return post.cluster_status === 'reviewing' ? 'Published. Counselors are reviewing the related concern.'
         : post.cluster_status === 'resolved' ? 'Published. The related concern was marked addressed by student welfare services.'
-        : 'Published to the feed (identifying details removed).';
+        : 'Published to the feed (identifying details removed). The Guidance team can see a summary.';
     case 'flagged_admin':
       return post.cluster_status === 'reviewing' ? 'Routed privately to counselors - a counselor is reviewing this concern.'
         : post.cluster_status === 'resolved' ? 'Routed privately to counselors - marked addressed by student welfare services.'

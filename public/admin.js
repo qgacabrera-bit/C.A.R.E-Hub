@@ -219,6 +219,28 @@ function renderModeration(items) {
   }));
 }
 
+const WHERE_IT_IS = {
+  published: 'On the public feed',
+  flagged_admin: 'In the counselor queue',
+  pending_moderation: 'Held for moderation',
+  withheld: 'Withheld after review',
+};
+
+function renderAllReports(rows) {
+  const table = $('#all-reports');
+  if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { text: 'No reports in the last 30 days.' })));
+  table.replaceChildren(
+    el('thead', {}, el('tr', {}, ...['When', 'Report', 'Urgency', 'Where it is', 'Summary'].map((h) => el('th', { scope: 'col', text: h })))),
+    el('tbody', {}, ...rows.map((r) => el('tr', {},
+      el('td', { class: 'small', text: timeAgo(r.created_at) }),
+      el('td', {}, el('strong', { text: r.category }), el('div', { class: 'small muted', text: `${r.location} · #${r.id}${r.cluster_id ? ` · Cluster #${r.cluster_id}` : ''}` })),
+      el('td', {}, sevBadge(r.severity_score, r.severity_label)),
+      el('td', { class: 'small', text: r.private_report ? 'Private report (via the Adviser)' : (WHERE_IT_IS[r.status] ?? r.status) }),
+      el('td', { class: 'small' }, el('details', {}, el('summary', {}, 'Read'), el('p', { class: 'log-summary' }, taggedText(r.content)))),
+    ))),
+  );
+}
+
 function renderEscalations(rows) {
   const table = $('#escalations');
   if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { text: 'No escalations yet.' })));
@@ -245,6 +267,7 @@ async function load() {
     renderHotspots(data.hotspots);
     renderModeration(data.moderation);
     renderEscalations(data.escalations);
+    renderAllReports(data.allReports ?? []);
   } catch (e) {
     if (e.status !== 401) alert(`Could not load dashboard: ${e.message}`);
   }

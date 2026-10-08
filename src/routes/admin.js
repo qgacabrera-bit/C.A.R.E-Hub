@@ -123,7 +123,16 @@ export function adminRouter(db) {
 
     const escalations = db.prepare(`SELECT * FROM escalations ORDER BY dispatched_at DESC LIMIT 50`).all();
 
-    res.json({ stats, priority, moderation, clusters, hotspots, escalations });
+    // Every concern students share reaches this page as a sanitized summary - not only the urgent ones.
+    const allReports = db.prepare(`SELECT id, category, location_tag, sanitized_content, severity_score, status, visibility, cluster_id, created_at
+                                   FROM posts WHERE created_at >= ? ORDER BY created_at DESC LIMIT 200`).all(since30)
+      .map((p) => ({
+        id: p.id, category: p.category, location: p.location_tag, content: p.sanitized_content,
+        severity_score: p.severity_score, severity_label: severityLabel(p.severity_score),
+        status: p.status, private_report: p.visibility === 'private', cluster_id: p.cluster_id, created_at: p.created_at,
+      }));
+
+    res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports });
   });
 
   r.patch('/clusters/:id', (req, res, next) => {

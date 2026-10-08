@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { transaction } from '../db.js';
-import { callClaude } from '../llm.js';
+import { callLlm, llmStatus } from '../llm.js';
 import { scrubText, leaksKnownSurface, containsGuiltLanguage } from './scrubber.js';
 import { scoreSeverity, severityLabel } from './severity.js';
 import { rankSimilar } from './similarity.js';
@@ -58,8 +58,8 @@ const SCRUB_SCHEMA = {
   additionalProperties: false,
 };
 
-async function claudeReview(preScrubbed, category, location) {
-  const result = await callClaude({
+async function aiReview(preScrubbed, category, location) {
+  const result = await callLlm({
     system: SCRUB_SYSTEM,
     messages: [{ role: 'user', content: `Category: ${category}\nLocation: ${location}\n\n<narrative>\n${preScrubbed}\n</narrative>` }],
     schema: SCRUB_SCHEMA,
@@ -71,7 +71,7 @@ async function claudeReview(preScrubbed, category, location) {
   return result;
 }
 
-/** Full sanitization: deterministic scrub -> optional Claude review -> deterministic re-check. */
+/** Full sanitization: deterministic scrub -> optional AI review -> deterministic re-check. */
 export async function sanitizeNarrative(raw, { category, location, useLlm = true } = {}) {
   const first = scrubText(raw);
   let text = first.text;
@@ -82,7 +82,7 @@ export async function sanitizeNarrative(raw, { category, location, useLlm = true
   let holdForResidual = first.residualIdentifiers.length > 0;
   const notes = [...first.notes];
 
-  const review = useLlm ? await claudeReview(first.text, category, location) : null;
+  const review = useLlm ? await aiReview(first.text, category, location) : null;
   if (review) {
     // Never accept a rewrite that brings back an identifier the rules already removed.
     if (leaksKnownSurface(review.sanitized_text, first.knownSurfaces)) {
@@ -93,7 +93,7 @@ export async function sanitizeNarrative(raw, { category, location, useLlm = true
       retaliation = retaliation || review.retaliation_intent || recheck.retaliation;
       llmUrgency = review.urgency;
       llmReasons = review.urgency_reasons ?? [];
-      reviewedBy = 'rules+claude';
+      reviewedBy = `rules+${llmStatus().provider}`;
       holdForResidual = review.possible_identifiers_remaining;
       // Model review supersedes the heuristic residual-name warning.
       const idx = notes.findIndex((n) => n.startsWith('Possible unredacted'));

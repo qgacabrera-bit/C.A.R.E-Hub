@@ -1,10 +1,10 @@
 // C.A.R.E. Adviser: supportive conversational assistant + "turn this into a report draft".
 // Chat history lives only in the student's browser; the server is stateless for chat.
 import { config } from './config.js';
-import { callClaude } from './llm.js';
+import { callLlm, llmStatus } from './llm.js';
 import { scrubText } from './pipeline/scrubber.js';
 import { scoreSeverity } from './pipeline/severity.js';
-import { offlineReply, suggestionsFor, detectTopics, categoryForTopics, isSmallTalk } from './adviserEngine.js';
+import { offlineReply, suggestionsFor, detectTopics, categoryForTopics, isSmallTalk, ensureFormalChannels } from './adviserEngine.js';
 
 const HOTLINES = 'NCMH Crisis Hotline 1553 (toll-free, 24/7) or 0917-899-8727, emergency 911, or your campus Guidance Office';
 
@@ -13,14 +13,19 @@ const ADVISER_SYSTEM = `You are the C.A.R.E. Adviser inside C.A.R.E. Hub, an ano
 How you help:
 - Help students calm down and feel heard (validate feelings, simple grounding like slow breathing or 5-4-3-2-1).
 - Help them think through peer pressure and conflict, including scripts for saying no and ways to stay safe.
-- Help them organize messy thoughts into a clear account of what happened, where, when, and how often. They can report in two anonymous ways: "Draft a post" (appears on the feed with names removed) or "Send privately" (goes only to the Guidance team, never on the feed). Mention these when it fits.
+- Help them organize messy thoughts into a clear account of what happened, where, when, and how often. They can report in two anonymous ways: "Draft a post" (appears on the feed with names removed) or "Send privately" (goes only to the Guidance team, never on the feed). Mention these when it fits. Either way, a summary with names removed is always shared with the Guidance team.
 - Encourage connecting with trusted adults: guidance counselors, advisers, parents/guardians.
+
+Support pathways:
+- Low-severity concerns (teasing, peer pressure, stress, feeling down, campus hazards): you may suggest local support such as their class adviser, a student council (SSG/SSLG) officer, a trusted teacher, or their barangay's Sangguniang Kabataan (SK) - always in addition to the Guidance Office, never instead of it.
+- Serious concerns (violence, threats, abuse at home, sexual harassment, staff misconduct, self-harm, or anything unsafe): always point them to the Guidance Office, the relevant authorities (911, campus security, or the barangay VAWC desk), and the NCMH Crisis Hotline 1553. Never suggest that a student council or SK alone can handle these.
 
 Boundaries you always keep:
 - You are not a therapist, lawyer, or disciplinary authority. Never diagnose, never decide who is guilty, never suggest punishments, and never help plan call-outs, exposing someone online, or retaliation. If asked, gently redirect to safe, formal channels.
 - Do not ask for or repeat real names, student numbers, or contact details. If the student shares names, refer to people generically ("the classmate", "the teacher").
 - If there is any sign of self-harm, suicidal thoughts, abuse, or immediate danger: respond with warmth, encourage them to reach out right now to ${HOTLINES}, and to a trusted adult nearby. Keep it short and caring.
-- Keep replies brief (2-6 short sentences), warm, plain-language, and age-appropriate. Taglish is fine if the student uses it.`;
+- Keep replies brief (2-6 short sentences), warm, plain-language, and age-appropriate. Taglish is fine if the student uses it.
+- Write plain conversational text for a chat bubble. Do not use Markdown: no asterisks or underscores for emphasis, no # headings. Separate ideas with line breaks; if you list things, start each line with "• ".`;
 
 function lastUserText(messages) {
   return [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
@@ -61,13 +66,19 @@ export async function adviserReply(messages, { useLlm = true } = {}) {
   const { crisis, score } = scoreSeverity(latest);
   const urgent = offline.crisis || crisis || score >= 5;
 
-  // Claude never sees the `offer` bookkeeping field.
-  const apiHistory = history.map(({ role, content }) => ({ role, content }));
-  const llmReply = useLlm ? await callClaude({ system: ADVISER_SYSTEM, messages: apiHistory, effort: 'low', maxTokens: 4000 }) : null;
+  // The AI never sees the `offer` bookkeeping field, and student messages are scrubbed first:
+  // names, numbers and handles are never sent to the AI provider.
+  const apiHistory = history.map(({ role, content }) => ({ role, content: role === 'user' ? scrubText(content).text : content }));
+  const llmReply = useLlm ? await callLlm({ system: ADVISER_SYSTEM, messages: apiHistory, effort: 'low', maxTokens: 4000 }) : null;
   if (llmReply) {
-    return { reply: llmReply, crisis: urgent, source: 'claude', offer: null, suggestions: urgent ? offline.suggestions : suggestionsFor(history) };
+    // Serious concerns always name the Guidance Office, an authority and the hotline, whatever the AI wrote.
+    const reply = urgent || offline.serious ? ensureFormalChannels(llmReply) : llmReply;
+    return { reply, crisis: urgent, serious: offline.serious, source: llmStatus().provider, offer: null, suggestions: urgent || offline.serious ? offline.suggestions : suggestionsFor(history) };
   }
-  return { reply: offline.reply, crisis: urgent, source: 'offline', offer: offline.offer, suggestions: offline.suggestions, intent: offline.intent };
+  return {
+    reply: urgent ? ensureFormalChannels(offline.reply) : offline.reply,
+    crisis: urgent, serious: offline.serious || urgent, source: 'offline', offer: offline.offer, suggestions: offline.suggestions, intent: offline.intent,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -120,8 +131,8 @@ export async function buildReportDraft(messages, { useLlm = true } = {}) {
   if (userText.trim().length < 10) return null;
 
   if (useLlm) {
-    const transcript = history.map((m) => `${m.role === 'user' ? 'Student' : 'Adviser'}: ${m.content}`).join('\n');
-    const draft = await callClaude({
+    const transcript = history.map((m) => `${m.role === 'user' ? 'Student' : 'Adviser'}: ${m.role === 'user' ? scrubText(m.content).text : m.content}`).join('\n');
+    const draft = await callLlm({
       system: DRAFT_SYSTEM,
       messages: [{ role: 'user', content: `<conversation>\n${transcript}\n</conversation>` }],
       schema: DRAFT_SCHEMA,
@@ -129,7 +140,7 @@ export async function buildReportDraft(messages, { useLlm = true } = {}) {
       maxTokens: 4000,
     });
     if (draft && config.categories.includes(draft.category) && config.locations.includes(draft.location_tag)) {
-      return { ...draft, narrative: scrubText(draft.narrative).text, source: 'claude' };
+      return { ...draft, narrative: scrubText(draft.narrative).text, source: llmStatus().provider };
     }
   }
 
