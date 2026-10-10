@@ -28,9 +28,15 @@ function requireToken(secret) {
   return token;
 }
 
-function reactionCounts(db, postIds) {
+// Route ids outside the Postgres integer range would be a database error; treat them as "not found".
+function toId(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 2147483647 ? n : -1;
+}
+
+async function reactionCounts(db, postIds) {
   if (!postIds.length) return new Map();
-  const rows = db.prepare(`SELECT post_id, kind, COUNT(*) AS n FROM reactions WHERE post_id IN (${postIds.map(() => '?').join(',')}) GROUP BY post_id, kind`).all(...postIds);
+  const rows = await db.all(`SELECT post_id, kind, COUNT(*)::int AS n FROM reactions WHERE post_id IN (${postIds.map(() => '?').join(',')}) GROUP BY post_id, kind`, postIds);
   const map = new Map();
   for (const r of rows) {
     if (!map.has(r.post_id)) map.set(r.post_id, Object.fromEntries(Object.keys(REACTIONS).map((k) => [k, 0])));
@@ -40,11 +46,11 @@ function reactionCounts(db, postIds) {
 }
 
 /** Pattern-level public notices for high-priority reports. Never includes narrative text. */
-function campusNotices(db) {
+async function campusNotices(db) {
   const since = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
-  const rows = db.prepare(`SELECT p.category, p.location_tag, p.risk_indicators, p.created_at, c.status AS cluster_status
-                           FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
-                           WHERE p.status = 'flagged_admin' AND p.visibility = 'public' AND p.category != 'Mental Health' AND p.created_at >= ?`).all(since);
+  const rows = await db.all(`SELECT p.category, p.location_tag, p.risk_indicators, p.created_at, c.status AS cluster_status
+                             FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
+                             WHERE p.status = 'flagged_admin' AND p.visibility = 'public' AND p.category != 'Mental Health' AND p.created_at >= ?`, [since]);
   const groups = new Map();
   for (const r of rows) {
     const key = `${r.category}|${r.location_tag}`;
@@ -71,7 +77,7 @@ function campusNotices(db) {
 }
 
 // Distinct anonymous students behind a cluster ("N students shared this").
-const STUDENT_COUNT_SQL = (clusterCol) => `(SELECT COUNT(DISTINCT sp.anonymous_author_token) FROM posts sp WHERE sp.cluster_id = ${clusterCol} AND sp.visibility = 'public')`;
+const STUDENT_COUNT_SQL = (clusterCol) => `(SELECT COUNT(DISTINCT sp.anonymous_author_token)::int FROM posts sp WHERE sp.cluster_id = ${clusterCol} AND sp.visibility = 'public')`;
 
 function followUpFor(post) {
   if (post.visibility === 'private') {
@@ -115,22 +121,22 @@ export function publicRouter(db) {
 
   // `categories` is a comma-separated topic filter. The anonymous session (sent as a header so it
   // never lands in a URL) is only used to mark which reaction this student has given.
-  r.get('/feed', (req, res) => {
+  r.get('/feed', async (req, res) => {
     const topics = String(req.query.categories ?? '').split(',').filter((c) => config.categories.includes(c));
     const viewer = authorTokenFromSecret(req.get('X-Anon-Session'));
-    const posts = db.prepare(`SELECT p.id, p.anonymous_author_token, p.category, p.sanitized_content, p.location_tag, p.severity_score,
-                                     p.cluster_id, p.created_at, c.report_count, c.status AS cluster_status,
-                                     ${STUDENT_COUNT_SQL('c.id')} AS student_count
-                              FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
-                              WHERE p.status = 'published' AND p.visibility = 'public' ${topics.length ? `AND p.category IN (${topics.map(() => '?').join(',')})` : ''}
-                              ORDER BY p.created_at DESC LIMIT 100`).all(...topics);
-    const counts = reactionCounts(db, posts.map((p) => p.id));
+    const posts = await db.all(`SELECT p.id, p.anonymous_author_token, p.category, p.sanitized_content, p.location_tag, p.severity_score,
+                                       p.cluster_id, p.created_at, c.report_count, c.status AS cluster_status,
+                                       ${STUDENT_COUNT_SQL('c.id')} AS student_count
+                                FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
+                                WHERE p.status = 'published' AND p.visibility = 'public' ${topics.length ? `AND p.category IN (${topics.map(() => '?').join(',')})` : ''}
+                                ORDER BY p.created_at DESC LIMIT 100`, topics);
+    const counts = await reactionCounts(db, posts.map((p) => p.id));
     const mine = new Map(viewer && posts.length
-      ? db.prepare(`SELECT post_id, kind FROM reactions WHERE author_token = ? AND post_id IN (${posts.map(() => '?').join(',')})`)
-        .all(viewer, ...posts.map((p) => p.id)).map((r) => [r.post_id, r.kind])
+      ? (await db.all(`SELECT post_id, kind FROM reactions WHERE author_token = ? AND post_id IN (${posts.map(() => '?').join(',')})`,
+        [viewer, ...posts.map((p) => p.id)])).map((r) => [r.post_id, r.kind])
       : []);
     res.json({
-      notices: campusNotices(db).filter((n) => !topics.length || topics.includes(n.category)),
+      notices: (await campusNotices(db)).filter((n) => !topics.length || topics.includes(n.category)),
       posts: posts.map((p) => ({
         my_reaction: mine.get(p.id) ?? null,
         id: p.id,
@@ -149,14 +155,14 @@ export function publicRouter(db) {
 
   // Public "Concerns Raised" list: titles and counts only, never narratives. Wellbeing
   // clusters are personal and stay counselor-only.
-  r.get('/patterns', (_req, res) => {
+  r.get('/patterns', async (_req, res) => {
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    const rows = db.prepare(`SELECT id, cluster_title, incident_type, location_tag, report_count, last_reported_at, status,
-                                    ${STUDENT_COUNT_SQL('incident_clusters.id')} AS student_count
-                             FROM incident_clusters
-                             WHERE status != 'resolved' AND incident_type != 'Mental Health' AND last_reported_at >= ?
-                               AND (SELECT COUNT(*) FROM posts pp WHERE pp.cluster_id = incident_clusters.id AND pp.visibility = 'public') >= 2
-                             ORDER BY report_count DESC, last_reported_at DESC LIMIT 6`).all(since);
+    const rows = await db.all(`SELECT id, cluster_title, incident_type, location_tag, report_count, last_reported_at, status,
+                                      ${STUDENT_COUNT_SQL('incident_clusters.id')} AS student_count
+                               FROM incident_clusters
+                               WHERE status != 'resolved' AND incident_type != 'Mental Health' AND last_reported_at >= ?
+                                 AND (SELECT COUNT(*)::int FROM posts pp WHERE pp.cluster_id = incident_clusters.id AND pp.visibility = 'public') >= 2
+                               ORDER BY report_count DESC, last_reported_at DESC LIMIT 6`, [since]);
     res.json(rows.map((c) => ({
       title: c.cluster_title,
       category: c.incident_type,
@@ -201,14 +207,14 @@ export function publicRouter(db) {
     }
   });
 
-  r.post('/my-posts', (req, res, next) => {
+  r.post('/my-posts', async (req, res, next) => {
     try {
       const token = requireToken(req.body?.secret);
-      const posts = db.prepare(`SELECT p.id, p.category, p.location_tag, p.sanitized_content, p.severity_score, p.status, p.visibility, p.created_at,
-                                       p.moderation_notes, c.id AS cluster_id, c.report_count, c.status AS cluster_status,
-                                       ${STUDENT_COUNT_SQL('c.id')} AS student_count
-                                FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
-                                WHERE p.anonymous_author_token = ? ORDER BY p.created_at DESC`).all(token);
+      const posts = await db.all(`SELECT p.id, p.category, p.location_tag, p.sanitized_content, p.severity_score, p.status, p.visibility, p.created_at,
+                                         p.moderation_notes, c.id AS cluster_id, c.report_count, c.status AS cluster_status,
+                                         ${STUDENT_COUNT_SQL('c.id')} AS student_count
+                                  FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
+                                  WHERE p.anonymous_author_token = ? ORDER BY p.created_at DESC`, [token]);
       res.json({
         handle: displayHandle(token),
         posts: posts.map((p) => ({
@@ -231,36 +237,41 @@ export function publicRouter(db) {
     }
   });
 
-  r.post('/my-posts/:id/withdraw', (req, res, next) => {
+  r.post('/my-posts/:id/withdraw', async (req, res, next) => {
     try {
       const token = requireToken(req.body?.secret);
-      const post = db.prepare('SELECT id, cluster_id, status FROM posts WHERE id = ? AND anonymous_author_token = ?').get(Number(req.params.id), token);
+      const post = await db.get('SELECT id, cluster_id, status FROM posts WHERE id = ? AND anonymous_author_token = ?', [toId(req.params.id), token]);
       if (!post) throw new UserError('Report not found.', 404);
       if (post.status === 'flagged_admin') {
         // Safety reports stay with counselors; only public visibility can be changed by the author.
         throw new UserError('High-priority reports stay with counselors so they can make sure everyone is safe. Contact your Guidance Office if you have concerns.', 409);
       }
-      db.prepare('DELETE FROM posts WHERE id = ?').run(post.id);
-      if (post.cluster_id) db.prepare('UPDATE incident_clusters SET report_count = MAX(report_count - 1, 0) WHERE id = ?').run(post.cluster_id);
+      await db.tx(async (tx) => {
+        await tx.run('DELETE FROM posts WHERE id = ?', [post.id]);
+        if (post.cluster_id) await tx.run('UPDATE incident_clusters SET report_count = GREATEST(report_count - 1, 0) WHERE id = ?', [post.cluster_id]);
+      });
       res.json({ ok: true });
     } catch (err) {
       next(err);
     }
   });
 
-  r.post('/posts/:id/react', (req, res, next) => {
+  r.post('/posts/:id/react', async (req, res, next) => {
     try {
       const token = requireToken(req.body?.secret);
       const kind = req.body?.kind;
       if (!Object.hasOwn(REACTIONS, kind)) throw new UserError('Unknown reaction.');
-      const post = db.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'").get(Number(req.params.id));
+      const post = await db.get("SELECT id FROM posts WHERE id = ? AND status = 'published'", [toId(req.params.id)]);
       if (!post) throw new UserError('Post not found.', 404);
       // One reaction per student: same kind toggles off, a different kind replaces it.
-      const existing = db.prepare('SELECT kind FROM reactions WHERE post_id = ? AND author_token = ?').get(post.id, token);
-      db.prepare('DELETE FROM reactions WHERE post_id = ? AND author_token = ?').run(post.id, token);
-      const myReaction = existing?.kind === kind ? null : kind;
-      if (myReaction) db.prepare('INSERT INTO reactions (post_id, kind, author_token) VALUES (?, ?, ?)').run(post.id, myReaction, token);
-      res.json({ my_reaction: myReaction, reactions: reactionCounts(db, [post.id]).get(post.id) ?? Object.fromEntries(Object.keys(REACTIONS).map((k) => [k, 0])) });
+      const myReaction = await db.tx(async (tx) => {
+        const existing = await tx.get('SELECT kind FROM reactions WHERE post_id = ? AND author_token = ?', [post.id, token]);
+        await tx.run('DELETE FROM reactions WHERE post_id = ? AND author_token = ?', [post.id, token]);
+        const choice = existing?.kind === kind ? null : kind;
+        if (choice) await tx.run('INSERT INTO reactions (post_id, kind, author_token) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', [post.id, choice, token]);
+        return choice;
+      });
+      res.json({ my_reaction: myReaction, reactions: (await reactionCounts(db, [post.id])).get(post.id) ?? Object.fromEntries(Object.keys(REACTIONS).map((k) => [k, 0])) });
     } catch (err) {
       next(err);
     }
