@@ -50,7 +50,8 @@ $('#login-form').addEventListener('submit', async (e) => {
     $('#login-error').hidden = false;
   }
 });
-$('#logout').addEventListener('click', () => {
+$('#logout').addEventListener('click', async () => {
+  await call('/api/admin/logout', { method: 'POST' }).catch(() => {});
   setToken(null);
   showDashboard(false);
 });
@@ -236,9 +237,43 @@ function renderAllReports(rows) {
       el('td', {}, el('strong', { text: r.category }), el('div', { class: 'small muted', text: `${r.location} · #${r.id}${r.cluster_id ? ` · Cluster #${r.cluster_id}` : ''}` })),
       el('td', {}, sevBadge(r.severity_score, r.severity_label)),
       el('td', { class: 'small', text: r.private_report ? 'Private report (via the Adviser)' : (WHERE_IT_IS[r.status] ?? r.status) }),
-      el('td', { class: 'small' }, el('details', {}, el('summary', {}, 'Read'), el('p', { class: 'log-summary' }, taggedText(r.content)))),
+      el('td', { class: 'small' }, el('button', { class: 'btn btn-sm', type: 'button', onclick: (e) => openReportModal(r, e.currentTarget) }, 'Read')),
     ))),
   );
+}
+
+// One reusable pop-up for reading a full report, so opening a summary never stretches the table.
+let reportModal = null;
+let reportModalOpener = null;
+
+function openReportModal(report, opener) {
+  if (!reportModal) {
+    reportModal = el('dialog', { class: 'report-modal', 'aria-labelledby': 'report-modal-title' });
+    reportModal.addEventListener('click', (e) => {
+      if (e.target === reportModal) reportModal.close();
+    });
+    reportModal.addEventListener('close', () => {
+      reportModalOpener?.focus();
+      reportModalOpener = null;
+    });
+    document.body.append(reportModal);
+  }
+  reportModalOpener = opener;
+  reportModal.replaceChildren(
+    el('div', { class: 'report-modal-head' },
+      el('h3', { id: 'report-modal-title', text: `Report #${report.id} · ${report.category}` }),
+      el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: () => reportModal.close() }, '×'),
+    ),
+    el('div', { class: 'report-modal-meta small muted' },
+      sevBadge(report.severity_score, report.severity_label),
+      el('span', { text: report.location }),
+      el('span', { text: new Date(report.created_at).toLocaleString() }),
+      report.cluster_id ? el('span', { text: `Cluster #${report.cluster_id}` }) : null,
+    ),
+    el('p', { class: 'report-modal-body' }, taggedText(report.content)),
+    el('p', { class: 'report-modal-note small muted', text: 'Identifying details were removed. This does not determine fault.' }),
+  );
+  reportModal.showModal();
 }
 
 function renderEscalations(rows) {

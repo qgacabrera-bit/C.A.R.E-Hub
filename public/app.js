@@ -842,8 +842,35 @@ function trackFooterHeight() {
   if ('ResizeObserver' in window) new ResizeObserver(update).observe(footer);
 }
 
+// Counselors who open the student view get a way back to the portal. Visibility is decided only by the
+// server's answer for the stored token - never by client-side state alone.
+async function showExitForAdmins() {
+  let token = null;
+  try {
+    token = sessionStorage.getItem('care.admin');
+  } catch {
+    return;
+  }
+  if (!token) return;
+  try {
+    const { role } = await api('/api/admin/whoami', { token });
+    if (role === 'admin') {
+      $('#exit-student-view').hidden = false;
+    } else if (role === 'student') {
+      try {
+        sessionStorage.removeItem('care.admin');
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* leave the button hidden */
+  }
+}
+
 async function boot() {
   trackFooterHeight();
+  showExitForAdmins();
   state.secret = getSecret();
   try {
     state.topics = new Set(JSON.parse(storage.get('care.topics') || '[]'));
