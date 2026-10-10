@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { config } from '../config.js';
-import { transaction } from '../db.js';
 import { callLlm, llmStatus } from '../llm.js';
 import { scrubText, leaksKnownSurface, containsGuiltLanguage } from './scrubber.js';
 import { scoreSeverity, severityLabel } from './severity.js';
@@ -110,12 +109,10 @@ export async function sanitizeNarrative(raw, { category, location, useLlm = true
 // Clustering
 // ---------------------------------------------------------------------------------------------
 
-function findClusterMatch(db, { text, category, location, now }) {
+async function findClusterMatch(db, { text, category, location, now }) {
   const since30 = new Date(now - 30 * DAY).toISOString();
-  const candidates = db
-    .prepare(`SELECT id, sanitized_content AS text, cluster_id, category, location_tag, created_at
-              FROM posts WHERE status != 'withheld' AND created_at >= ? ORDER BY created_at DESC LIMIT 500`)
-    .all(since30);
+  const candidates = await db.all(`SELECT id, sanitized_content AS text, cluster_id, category, location_tag, created_at
+                                   FROM posts WHERE status != 'withheld' AND created_at >= ? ORDER BY created_at DESC LIMIT 500`, [since30]);
   if (!candidates.length) return null;
 
   const [top] = rankSimilar(text, candidates);
@@ -135,21 +132,19 @@ function findClusterMatch(db, { text, category, location, now }) {
   return null;
 }
 
-function attachToCluster(db, match, { category, location, nowIso }) {
+async function attachToCluster(db, match, { category, location, nowIso }) {
   let clusterId = match.post.cluster_id;
   if (clusterId) {
-    db.prepare(`UPDATE incident_clusters SET report_count = report_count + 1, last_reported_at = ?,
-                status = CASE WHEN status = 'resolved' THEN 'active' ELSE status END WHERE id = ?`).run(nowIso, clusterId);
+    await db.run(`UPDATE incident_clusters SET report_count = report_count + 1, last_reported_at = ?,
+                  status = CASE WHEN status = 'resolved' THEN 'active' ELSE status END WHERE id = ?`, [nowIso, clusterId]);
   } else {
     const title = `${location} ${CATEGORY_NOUN[match.post.category] ?? 'Concern'}`;
-    clusterId = Number(
-      db.prepare(`INSERT INTO incident_clusters (cluster_title, incident_type, location_tag, report_count, first_reported_at, last_reported_at, status)
-                  VALUES (?, ?, ?, 2, ?, ?, 'active')`)
-        .run(title, match.post.category, match.post.location_tag, match.post.created_at, nowIso).lastInsertRowid,
-    );
-    db.prepare('UPDATE posts SET cluster_id = ? WHERE id = ?').run(clusterId, match.post.id);
+    clusterId = await db.insert(`INSERT INTO incident_clusters (cluster_title, incident_type, location_tag, report_count, first_reported_at, last_reported_at, status)
+                                 VALUES (?, ?, ?, 2, ?, ?, 'active')`,
+    [title, match.post.category, match.post.location_tag, match.post.created_at, nowIso]);
+    await db.run('UPDATE posts SET cluster_id = ? WHERE id = ?', [clusterId, match.post.id]);
   }
-  return db.prepare('SELECT * FROM incident_clusters WHERE id = ?').get(clusterId);
+  return db.get('SELECT * FROM incident_clusters WHERE id = ?', [clusterId]);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -173,10 +168,10 @@ export function buildSummary({ category, location, score, indicators, cluster, c
   return summary;
 }
 
-function escalate(db, { postId = null, clusterId = null, score, summary, nowIso }) {
+async function escalate(db, { postId = null, clusterId = null, score, summary, nowIso }) {
   const sentTo = config.escalationTargets[score] ?? config.escalationTargets[4];
-  db.prepare(`INSERT INTO escalations (cluster_id, post_id, severity_level, summary_brief, sent_to, dispatched_at)
-              VALUES (?, ?, ?, ?, ?, ?)`).run(clusterId, postId, score, summary, sentTo, nowIso);
+  await db.run(`INSERT INTO escalations (cluster_id, post_id, severity_level, summary_brief, sent_to, dispatched_at)
+                VALUES (?, ?, ?, ?, ?, ?)`, [clusterId, postId, score, summary, sentTo, nowIso]);
   console.log(`[escalation] severity ${score} -> ${sentTo} (post ${postId ?? '-'}, cluster ${clusterId ?? '-'})`);
 }
 
@@ -257,18 +252,24 @@ export function validateSubmission({ category, location_tag, narrative }) {
 export async function submitPost(db, { authorToken, category, location_tag, narrative, attachment, visibility = 'public', now = Date.now(), useLlm = true }) {
   const isPrivate = visibility === 'private';
   const valid = validateSubmission({ category, location_tag, narrative });
-  const raw = valid.text;
+  const raw = valid.text.replaceAll('\u0000', ''); // Postgres text cannot hold NUL bytes
   location_tag = valid.location;
   const file = parseAttachment(attachment);
 
+  // Sanitization (and any AI call) runs before the transaction, so the lock below is held only briefly.
   const clean = await sanitizeNarrative(raw, { category, location: location_tag, useLlm });
+  clean.text = clean.text.replaceAll('\u0000', '');
   const nowIso = new Date(now).toISOString();
 
-  return transaction(db, () => {
+  return db.tx(async (tx) => {
+    // Serialize submissions so concurrent near-identical reports cannot create duplicate clusters
+    // or duplicate cluster-level escalations.
+    await tx.get('SELECT pg_advisory_xact_lock(727001)');
+
     // Personal crisis reports are handled one-to-one and never grouped into (publicly hinted) patterns.
     const personalCrisis = scoreSeverity(clean.text + '\n' + raw).crisis;
-    const match = personalCrisis ? null : findClusterMatch(db, { text: clean.text, category, location: location_tag, now });
-    const cluster = match ? attachToCluster(db, match, { category, location: location_tag, nowIso }) : null;
+    const match = personalCrisis ? null : await findClusterMatch(tx, { text: clean.text, category, location: location_tag, now });
+    const cluster = match ? await attachToCluster(tx, match, { category, location: location_tag, nowIso }) : null;
 
     const sev = scoreSeverity(clean.text + '\n' + raw, {
       category,
@@ -288,17 +289,15 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
     if (isPrivate || sev.crisis || score >= config.escalationThreshold) status = 'flagged_admin';
     else if (clean.retaliation || clean.holdForResidual) status = 'pending_moderation';
 
-    const postId = Number(
-      db.prepare(`INSERT INTO posts (anonymous_author_token, category, raw_content, sanitized_content, location_tag, severity_score,
-                  risk_indicators, moderation_notes, cluster_id, status, has_attachment, visibility, created_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(authorToken, category, config.retainRawContent ? raw : null, clean.text, location_tag, score,
-          JSON.stringify(indicators), JSON.stringify(clean.notes), cluster?.id ?? null, status, file ? 1 : 0, isPrivate ? 'private' : 'public', nowIso).lastInsertRowid,
-    );
-    if (file) db.prepare('INSERT INTO attachments (post_id, mime_type, data, created_at) VALUES (?, ?, ?, ?)').run(postId, file.mime, file.data, nowIso);
+    const postId = await tx.insert(`INSERT INTO posts (anonymous_author_token, category, raw_content, sanitized_content, location_tag, severity_score,
+                                   risk_indicators, moderation_notes, cluster_id, status, has_attachment, visibility, created_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [authorToken, category, config.retainRawContent ? raw : null, clean.text, location_tag, score,
+      JSON.stringify(indicators), JSON.stringify(clean.notes), cluster?.id ?? null, status, file ? 1 : 0, isPrivate ? 'private' : 'public', nowIso]);
+    if (file) await tx.run('INSERT INTO attachments (post_id, mime_type, data, created_at) VALUES (?, ?, ?, ?)', [postId, file.mime, file.data, nowIso]);
 
     if (status === 'flagged_admin') {
-      escalate(db, {
+      await escalate(tx, {
         postId,
         clusterId: cluster?.id ?? null,
         score,
@@ -309,12 +308,12 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
 
     // A cluster that crosses the systemic threshold gets one cluster-level escalation.
     if (cluster && cluster.report_count >= config.systemicClusterSize) {
-      const already = db.prepare('SELECT 1 FROM escalations WHERE cluster_id = ? AND post_id IS NULL').get(cluster.id);
+      const already = await tx.get('SELECT 1 FROM escalations WHERE cluster_id = ? AND post_id IS NULL', [cluster.id]);
       if (!already) {
         const clusterIndicators = [...new Set(
-          db.prepare('SELECT risk_indicators FROM posts WHERE cluster_id = ?').all(cluster.id).flatMap((p) => JSON.parse(p.risk_indicators)),
+          (await tx.all('SELECT risk_indicators FROM posts WHERE cluster_id = ?', [cluster.id])).flatMap((p) => JSON.parse(p.risk_indicators)),
         )];
-        escalate(db, {
+        await escalate(tx, {
           clusterId: cluster.id,
           score: Math.max(4, score),
           summary: buildSummary({ category: cluster.incident_type, location: cluster.location_tag, score: Math.max(4, score), indicators: clusterIndicators, cluster, crisis: false }),
@@ -336,7 +335,7 @@ export async function submitPost(db, { authorToken, category, location_tag, narr
       crisis: sev.crisis,
       cluster: cluster ? {
         id: cluster.id, title: cluster.cluster_title, report_count: cluster.report_count, match_reason: match.reason, similarity: match.similarity,
-        student_count: db.prepare('SELECT COUNT(DISTINCT anonymous_author_token) AS n FROM posts WHERE cluster_id = ?').get(cluster.id).n,
+        student_count: (await tx.get('SELECT COUNT(DISTINCT anonymous_author_token)::int AS n FROM posts WHERE cluster_id = ?', [cluster.id])).n,
       } : null,
       notes: clean.notes,
     };
