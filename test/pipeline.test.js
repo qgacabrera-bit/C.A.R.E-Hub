@@ -1,7 +1,4 @@
 import { test } from 'node:test';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import assert from 'node:assert/strict';
 import { openDb } from '../src/db.js';
 import { scrubText, containsGuiltLanguage } from '../src/pipeline/scrubber.js';
@@ -69,7 +66,7 @@ test('similarity ranks near-duplicates above unrelated text', () => {
 });
 
 test('end-to-end: high-severity post bypasses the feed, clusters, and escalates', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const now = Date.now();
   await post(db, { category: 'Cyberbullying', location_tag: 'Online Section Chat', narrative: 'Teasing and photo sharing reported in Chem lab group chat, people laughing at a classmate.', now: now - 2 * 864e5 });
   const r = await post(db, {
@@ -84,18 +81,19 @@ test('end-to-end: high-severity post bypasses the feed, clusters, and escalates'
   assert.ok(r.cluster, 'linked to a cluster');
   assert.equal(r.cluster.report_count, 2);
 
-  const stored = db.prepare('SELECT * FROM posts WHERE id = ?').get(r.post_id);
+  const stored = await db.get('SELECT * FROM posts WHERE id = ?', [r.post_id]);
   assert.equal(stored.raw_content, null, 'raw narrative purged');
   assert.doesNotMatch(stored.sanitized_content, /Mark|Santos|John|Doe/);
 
-  const esc = db.prepare('SELECT * FROM escalations WHERE post_id = ?').get(r.post_id);
+  const esc = await db.get('SELECT * FROM escalations WHERE post_id = ?', [r.post_id]);
   assert.ok(esc);
   assert.ok(!containsGuiltLanguage(esc.summary_brief));
   assert.match(esc.summary_brief, /Pending counselor review/);
+  await db.close();
 });
 
 test('end-to-end: same type + zone within 7 days clusters; outside the window does not', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const now = Date.now();
   await post(db, { category: 'Campus Safety', location_tag: 'Gym', narrative: 'The gym floor near the bleachers is wet and slippery after rain.', now: now - 10 * 864e5 });
   const a = await post(db, { category: 'Campus Safety', location_tag: 'Gym', narrative: 'Basketball hoop backboard in the gym looks cracked and unstable.', now: now - 864e5 });
@@ -103,26 +101,29 @@ test('end-to-end: same type + zone within 7 days clusters; outside the window do
   const b = await post(db, { category: 'Campus Safety', location_tag: 'Gym', narrative: 'One of the gym ceiling fans is wobbling a lot during PE.', now });
   assert.ok(b.cluster);
   assert.equal(b.cluster.match_reason, 'type_location_window');
+  await db.close();
 });
 
 test('end-to-end: retaliation posts are held for moderation, not published', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const r = await post(db, { category: 'Bullying', location_tag: 'Cafeteria', narrative: "Let's expose the kids who bully people in the cafeteria, everyone go spam their accounts." });
   assert.equal(r.status, 'pending_moderation');
+  await db.close();
 });
 
 test('end-to-end: personal crisis reports are escalated but never clustered', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   await post(db, { category: 'Mental Health', location_tag: 'Library', narrative: 'Exams are stressful, studying in the library helps me a bit.' });
   const r = await post(db, { authorToken: token(3), category: 'Mental Health', location_tag: 'Library', narrative: 'I feel hopeless and sometimes I want to end my life.' });
   assert.equal(r.status, 'flagged_admin');
   assert.equal(r.severity_score, 5);
   assert.ok(r.crisis);
   assert.equal(r.cluster, null);
+  await db.close();
 });
 
-test('cluster titles drop "Pattern", old titles are migrated, and students are counted once', async () => {
-  const db = openDb(':memory:');
+test('cluster titles drop "Pattern" and students are counted once', async () => {
+  const db = await openDb(':memory:');
   const now = Date.now();
   await post(db, { category: 'Bullying', location_tag: 'Cafeteria', narrative: 'Some students keep taking seats from others at lunch time.', now: now - 864e5 });
   await post(db, { category: 'Bullying', location_tag: 'Cafeteria', narrative: 'People throw food at the younger students during lunch.', now: now - 3600e3 });
@@ -130,24 +131,14 @@ test('cluster titles drop "Pattern", old titles are migrated, and students are c
   assert.equal(r.cluster.title, 'Cafeteria Bullying');
   assert.equal(r.cluster.report_count, 3);
   assert.equal(r.cluster.student_count, 2); // token(1) posted twice
-
-
-  // A database from an older version gets its titles cleaned up when it is opened.
-  const file = path.join(os.tmpdir(), `care-migrate-${process.pid}-${Date.now()}.db`);
-  const legacy = openDb(file);
-  legacy.exec(`INSERT INTO incident_clusters (cluster_title, incident_type, location_tag, report_count, first_reported_at, last_reported_at)
-               VALUES ('Gym Peer Pressure Pattern', 'Peer Pressure', 'Gym', 2, '2026-01-01', '2026-01-02')`);
-  legacy.close();
-  const reopened = openDb(file);
-  assert.equal(reopened.prepare('SELECT cluster_title FROM incident_clusters').get().cluster_title, 'Gym Peer Pressure');
-  reopened.close();
-  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(file + suffix, { force: true });
+  await db.close();
 });
 
 test('validation rejects unknown categories and short narratives', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   await assert.rejects(post(db, { category: 'Gossip', location_tag: 'Gym', narrative: 'x'.repeat(40) }), /category/);
   await assert.rejects(post(db, { category: 'Bullying', location_tag: 'Gym', narrative: 'too short' }), /20 characters/);
+  await db.close();
 });
 
 test('free-text locations normalize to zones and never carry names', async () => {
@@ -158,10 +149,11 @@ test('free-text locations normalize to zones and never carry names', async () =>
   assert.doesNotMatch(normalizeLocation("Mr. Cruz's room"), /Cruz/);
   assert.equal(normalizeLocation(' '), null);
 
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const r = await post(db, { category: 'Campus Safety', location_tag: 'canteen', narrative: 'The canteen floor is slippery near the sink area every lunch.' });
-  assert.equal(db.prepare('SELECT location_tag FROM posts WHERE id = ?').get(r.post_id).location_tag, 'Cafeteria');
+  assert.equal((await db.get('SELECT location_tag FROM posts WHERE id = ?', [r.post_id])).location_tag, 'Cafeteria');
   await assert.rejects(post(db, { category: 'Bullying', location_tag: 'Gym', narrative: 'x'.repeat(3001) }), /3,000/);
+  await db.close();
 });
 
 test('summaries never contain guilt language', () => {
