@@ -81,7 +81,7 @@ test('offline draft skips small talk and uses the discussed topic', async () => 
 // Private reports over HTTP
 // ---------------------------------------------------------------------------------------------
 async function withServer(fn) {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const app = express();
   app.use(express.json());
   app.use('/api', publicRouter(db));
@@ -94,6 +94,7 @@ async function withServer(fn) {
     await fn({ db, post, get });
   } finally {
     server.close();
+    await db.close();
   }
 }
 
@@ -105,11 +106,11 @@ test('private reports go to counselors only and never appear publicly', async ()
     const r = await post('/adviser/private-report', { secret: SECRET, category: 'Bullying', location_tag: 'canteen', narrative });
     assert.equal(r.status, 201);
 
-    const row = db.prepare('SELECT * FROM posts WHERE id = ?').get(r.body.post_id);
+    const row = await db.get('SELECT * FROM posts WHERE id = ?', [r.body.post_id]);
     assert.equal(row.visibility, 'private');
     assert.equal(row.status, 'flagged_admin');
     assert.equal(row.location_tag, 'Cafeteria');
-    const esc = db.prepare('SELECT * FROM escalations WHERE post_id = ?').get(row.id);
+    const esc = await db.get('SELECT * FROM escalations WHERE post_id = ?', [row.id]);
     assert.match(esc.summary_brief, /Sent privately through the C\.A\.R\.E\. Adviser/);
 
     const feed = await get('/feed');
@@ -128,9 +129,9 @@ test('unlinked private reports cannot be traced back to the student', async () =
     const r = await post('/adviser/private-report', { secret: SECRET, unlinked: true, category: 'Peer Pressure', location_tag: 'Gym', narrative: 'A group in the gym keeps pressuring younger students to vape after PE.' });
     assert.equal(r.status, 201);
     assert.equal(r.body.post_id, null);
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM posts WHERE visibility = 'private'").get().n, 1);
+    assert.equal((await db.get("SELECT COUNT(*)::int AS n FROM posts WHERE visibility = 'private'")).n, 1);
     const token = authorTokenFromSecret(SECRET);
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM posts WHERE anonymous_author_token = ?').get(token).n, 0);
+    assert.equal((await db.get('SELECT COUNT(*)::int AS n FROM posts WHERE anonymous_author_token = ?', [token])).n, 0);
     const mine = await post('/my-posts', { secret: SECRET });
     assert.equal(mine.body.posts.length, 0);
   });
@@ -195,7 +196,7 @@ test('low-severity concerns may add local support, never instead of Guidance', (
 });
 
 test('every concern, including ordinary published posts, reaches the counselor portal', async () => {
-  const db = openDb(':memory:');
+  const db = await openDb(':memory:');
   const published = await submitPost(db, { authorToken: authorTokenFromSecret('portal-test-0123456789abcdef'), category: 'Campus Safety', location_tag: 'Library', narrative: 'The library stairs are slippery when it rains.', useLlm: false });
   assert.equal(published.status, 'published');
   const app = express();
@@ -212,5 +213,6 @@ test('every concern, including ordinary published posts, reaches the counselor p
     assert.match(row.content, /slippery/);
   } finally {
     server.close();
+    await db.close();
   }
 });

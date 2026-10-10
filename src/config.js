@@ -6,7 +6,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const config = {
   port: Number(process.env.PORT || 3000),
-  dbPath: process.env.CARE_DB_PATH || path.join(root, 'data', 'care-hub.db'),
+  // Supabase Transaction pooler string. Empty = embedded Postgres (PGlite) under data/pglite for local dev.
+  databaseUrl: process.env.DATABASE_URL || '',
+  localDataDir: path.join(root, 'data', 'pglite'),
   publicDir: path.join(root, 'public'),
 
   isProduction: process.env.NODE_ENV === 'production',

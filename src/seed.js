@@ -56,18 +56,20 @@ export async function seed(db) {
   }
 
   // Counselor workflow examples.
-  db.prepare("UPDATE incident_clusters SET status = 'reviewing' WHERE location_tag = 'Gym'").run();
+  await db.run("UPDATE incident_clusters SET status = 'reviewing' WHERE location_tag = 'Gym'");
 
-  const insert = db.prepare('INSERT OR IGNORE INTO reactions (post_id, kind, author_token) VALUES (?, ?, ?)');
   for (const [postIndex, kinds] of SEED_REACTIONS) {
-    kinds.forEach((kind, i) => insert.run(idsByIndex[postIndex - 1], kind, authorTokenFromSecret(demoSecret(100 + i))));
+    for (const [i, kind] of kinds.entries()) {
+      await db.run('INSERT INTO reactions (post_id, kind, author_token) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+        [idsByIndex[postIndex - 1], kind, authorTokenFromSecret(demoSecret(100 + i))]);
+    }
   }
   return idsByIndex.length;
 }
 
 export async function seedIfEmpty(db) {
   if (process.env.CARE_SEED === 'false') return;
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM posts').get();
+  const { n } = await db.get('SELECT COUNT(*)::int AS n FROM posts');
   if (n === 0) {
     const count = await seed(db);
     console.log(`[seed] loaded ${count} synthetic demo reports`);
@@ -76,9 +78,9 @@ export async function seedIfEmpty(db) {
 
 // `npm run seed` -> wipe and reload the synthetic dataset.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const db = openDb();
-  if (process.argv.includes('--reset')) resetDb(db);
+  const db = await openDb();
+  if (process.argv.includes('--reset')) await resetDb(db);
   const count = await seed(db);
   console.log(`[seed] loaded ${count} synthetic demo reports`);
-  db.close();
+  await db.close();
 }

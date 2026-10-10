@@ -19,7 +19,7 @@ npm run seed         # wipe and reload the synthetic dataset
 * Student app: `http://localhost:3000/`
 * Counselor portal: `http://localhost:3000/admin` (demo passcode `counselor-demo`)
 
-Requires Node.js 22.13+ (uses the built-in `node:sqlite`; no native builds).
+Requires Node.js 22.13+. Production data lives in Supabase Postgres (`DATABASE_URL`); without it, local development uses an embedded Postgres (PGlite) under `data/pglite`.
 
 ### Optional: AI-assisted review (Gemini or Claude)
 Set `GEMINI_API_KEY` (Google Gemini, default model `gemini-flash-latest`) or `ANTHROPIC_API_KEY` (Claude, `claude-opus-5-5`) to have an AI model double-check sanitization, add context to urgency scores, power the Adviser chat, and draft reports. With both set, Gemini is used unless `CARE_LLM_PROVIDER=anthropic`. Without a key, the app runs entirely on its deterministic offline engine; if a key is rejected or a request fails, it falls back to that engine automatically. Student messages are scrubbed of names, numbers and handles before anything is sent to the AI provider.
@@ -39,12 +39,13 @@ Set `GEMINI_API_KEY` (Google Gemini, default model `gemini-flash-latest`) or `AN
 | `GEMINI_FALLBACK_MODEL` | `gemini-flash-lite-latest` | Tried when the main model is overloaded (503); empty disables |
 | `ANTHROPIC_API_KEY` | – | Enables Claude |
 | `RETAIN_RAW_CONTENT` | `false` | Raw narratives are purged after sanitization unless `true` |
-| `CARE_DB_PATH` | `data/care-hub.db` | SQLite file |
+| `DATABASE_URL` | – | Supabase Transaction pooler string. **Required when `NODE_ENV=production`**. Empty = embedded PGlite for local dev |
+| `DB_POOL_MAX` | `5` | Max pooled Postgres connections per instance |
 | `CARE_SEED` | `true` | `false` skips auto-seeding an empty DB |
 
 ## Deploying
 
-GitHub hosts the code. **GitHub Pages can't run this app**: it serves static files only, and C.A.R.E. Hub needs its Node server and SQLite database. Pushing to `main` runs the tests and a server smoke test on Node 22 and 24 in GitHub Actions (`.github/workflows/ci.yml`).
+GitHub hosts the code. **GitHub Pages can't run this app**: it serves static files only, and C.A.R.E. Hub needs its Node server and a Postgres database (Supabase). Pushing to `main` runs the tests and a server smoke test on Node 22 and 24 in GitHub Actions (`.github/workflows/ci.yml`).
 
 **Render:** the repo includes a `render.yaml` Blueprint. In Render, choose **New → Blueprint**, pick this repository, and apply. The counselor passcode is generated for you; find it under the service's **Environment** tab. The free plan resets the database on every restart; see the comments in `render.yaml` to add a persistent disk.
 
@@ -55,13 +56,13 @@ To put it online elsewhere, deploy the repository to any Node or Docker host (Ra
 | Build / install | `npm ci` (or use the included `Dockerfile`) |
 | Start | `npm start` |
 | Health check | `GET /healthz` |
-| Env (required) | `NODE_ENV=production`, `ADMIN_PASSCODE=<12+ chars>`, `TRUST_PROXY=1` |
+| Env (required) | `NODE_ENV=production`, `DATABASE_URL=<Supabase Transaction pooler string>`, `ADMIN_PASSCODE=<12+ chars>`, `TRUST_PROXY=1` |
 | Env (optional) | `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`, `CARE_LLM`, `CARE_LLM_PROVIDER` |
-| Storage | Mount a **persistent disk** and point `CARE_DB_PATH` at it (Docker: `/app/data`). Without one, reports are lost on every redeploy |
+| Storage | Supabase Postgres. The tables come from `supabase/migrations/` and must already exist; the app never creates or alters them |
 
 ```bash
 docker build -t care-hub .
-docker run -p 3000:3000 -v care-data:/app/data \
+docker run -p 3000:3000 -e DATABASE_URL='postgresql://...' \
   -e ADMIN_PASSCODE='a-long-private-passcode' -e TRUST_PROXY=1 care-hub
 ```
 
