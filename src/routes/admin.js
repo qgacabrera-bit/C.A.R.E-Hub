@@ -45,6 +45,12 @@ function requireRole(...allowed) {
   };
 }
 
+// Route ids outside the Postgres integer range would be a database error; treat them as "not found".
+function toId(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 2147483647 ? n : -1;
+}
+
 const parse = (json) => {
   try {
     return JSON.parse(json);
@@ -76,14 +82,14 @@ export function adminRouter(db) {
     res.json({ ok: true });
   });
 
-  r.get('/overview', (_req, res) => {
+  r.get('/overview', async (_req, res) => {
     const since30 = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
 
-    const stats = db.prepare(`SELECT
-        (SELECT COUNT(*) FROM posts WHERE created_at >= ?) AS reports_30d,
-        (SELECT COUNT(*) FROM posts WHERE status = 'flagged_admin') AS priority,
-        (SELECT COUNT(*) FROM posts WHERE status = 'pending_moderation') AS moderation,
-        (SELECT COUNT(*) FROM incident_clusters WHERE status != 'resolved') AS open_clusters`).get(since30);
+    const stats = await db.get(`SELECT
+        (SELECT COUNT(*)::int FROM posts WHERE created_at >= ?) AS reports_30d,
+        (SELECT COUNT(*)::int FROM posts WHERE status = 'flagged_admin') AS priority,
+        (SELECT COUNT(*)::int FROM posts WHERE status = 'pending_moderation') AS moderation,
+        (SELECT COUNT(*)::int FROM incident_clusters WHERE status != 'resolved') AS open_clusters`, [since30]);
 
     const shapePost = (p) => ({
       id: p.id,
@@ -101,13 +107,13 @@ export function adminRouter(db) {
     });
 
     // Structured fields for the counselor queue (the stored summary_brief stays as the audit text).
-    const priority = db.prepare(`SELECT p.*, e.summary_brief, e.sent_to, e.dispatched_at,
-                                        c.cluster_title, c.report_count AS cluster_reports, c.first_reported_at AS cluster_first, c.status AS cluster_status
-                                 FROM posts p
-                                 LEFT JOIN escalations e ON e.post_id = p.id
-                                 LEFT JOIN incident_clusters c ON c.id = p.cluster_id
-                                 WHERE p.status = 'flagged_admin'
-                                 ORDER BY p.severity_score DESC, p.created_at DESC LIMIT 100`).all()
+    const priority = (await db.all(`SELECT p.*, e.summary_brief, e.sent_to, e.dispatched_at,
+                                           c.cluster_title, c.report_count AS cluster_reports, c.first_reported_at AS cluster_first, c.status AS cluster_status
+                                    FROM posts p
+                                    LEFT JOIN escalations e ON e.post_id = p.id
+                                    LEFT JOIN incident_clusters c ON c.id = p.cluster_id
+                                    WHERE p.status = 'flagged_admin'
+                                    ORDER BY p.severity_score DESC, p.created_at DESC LIMIT 100`))
       .map((p) => {
         const post = shapePost(p);
         return {
@@ -120,12 +126,19 @@ export function adminRouter(db) {
         };
       });
 
-    const moderation = db.prepare(`SELECT * FROM posts WHERE status = 'pending_moderation' ORDER BY created_at ASC LIMIT 100`).all().map(shapePost);
+    const moderation = (await db.all(`SELECT * FROM posts WHERE status = 'pending_moderation' ORDER BY created_at ASC LIMIT 100`)).map(shapePost);
 
-    const clusters = db.prepare(`SELECT c.*, MAX(p.severity_score) AS max_severity, ROUND(AVG(p.severity_score), 1) AS avg_severity,
-                                        GROUP_CONCAT(p.risk_indicators, '|') AS indicator_blobs
-                                 FROM incident_clusters c LEFT JOIN posts p ON p.cluster_id = c.id
-                                 GROUP BY c.id ORDER BY (c.status = 'resolved'), max_severity DESC, c.last_reported_at DESC`).all()
+    // Linked reports for every cluster in one query, instead of one query per cluster.
+    const linked = Map.groupBy(
+      await db.all(`SELECT id, cluster_id, sanitized_content, severity_score, status, created_at
+                    FROM posts WHERE cluster_id IS NOT NULL ORDER BY created_at DESC`),
+      (p) => p.cluster_id,
+    );
+
+    const clusters = (await db.all(`SELECT c.*, MAX(p.severity_score) AS max_severity, ROUND(AVG(p.severity_score), 1)::float8 AS avg_severity,
+                                           string_agg(p.risk_indicators, '|') AS indicator_blobs
+                                    FROM incident_clusters c LEFT JOIN posts p ON p.cluster_id = c.id
+                                    GROUP BY c.id ORDER BY (c.status = 'resolved'), max_severity DESC NULLS LAST, c.last_reported_at DESC`))
       .map((c) => ({
         id: c.id,
         title: c.cluster_title,
@@ -138,19 +151,19 @@ export function adminRouter(db) {
         max_severity: c.max_severity ?? 1,
         avg_severity: c.avg_severity ?? 1,
         indicators: [...new Set((c.indicator_blobs ?? '').split('|').filter(Boolean).flatMap(parse))].slice(0, 6),
-        reports: db.prepare(`SELECT id, sanitized_content, severity_score, status, created_at FROM posts WHERE cluster_id = ? ORDER BY created_at DESC`).all(c.id),
+        reports: (linked.get(c.id) ?? []).map(({ cluster_id, ...p }) => p),
       }));
 
-    const hotspots = db.prepare(`SELECT location_tag AS location, COUNT(*) AS reports, MAX(severity_score) AS max_severity,
-                                        ROUND(AVG(severity_score), 1) AS avg_severity, GROUP_CONCAT(DISTINCT category) AS categories
-                                 FROM posts WHERE created_at >= ? GROUP BY location_tag ORDER BY reports DESC, max_severity DESC`).all(since30)
+    const hotspots = (await db.all(`SELECT location_tag AS location, COUNT(*)::int AS reports, MAX(severity_score) AS max_severity,
+                                           ROUND(AVG(severity_score), 1)::float8 AS avg_severity, string_agg(DISTINCT category, ',') AS categories
+                                    FROM posts WHERE created_at >= ? GROUP BY location_tag ORDER BY reports DESC, max_severity DESC`, [since30]))
       .map((h) => ({ ...h, categories: h.categories ? h.categories.split(',') : [] }));
 
-    const escalations = db.prepare(`SELECT * FROM escalations ORDER BY dispatched_at DESC LIMIT 50`).all();
+    const escalations = await db.all(`SELECT * FROM escalations ORDER BY dispatched_at DESC LIMIT 50`);
 
     // Every concern students share reaches this page as a sanitized summary - not only the urgent ones.
-    const allReports = db.prepare(`SELECT id, category, location_tag, sanitized_content, severity_score, status, visibility, cluster_id, created_at
-                                   FROM posts WHERE created_at >= ? ORDER BY created_at DESC LIMIT 200`).all(since30)
+    const allReports = (await db.all(`SELECT id, category, location_tag, sanitized_content, severity_score, status, visibility, cluster_id, created_at
+                                      FROM posts WHERE created_at >= ? ORDER BY created_at DESC LIMIT 200`, [since30]))
       .map((p) => ({
         id: p.id, category: p.category, location: p.location_tag, content: p.sanitized_content,
         severity_score: p.severity_score, severity_label: severityLabel(p.severity_score),
@@ -160,25 +173,25 @@ export function adminRouter(db) {
     res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports });
   });
 
-  r.patch('/clusters/:id', (req, res, next) => {
+  r.patch('/clusters/:id', async (req, res, next) => {
     const status = req.body?.status;
     if (!['active', 'reviewing', 'resolved'].includes(status)) return next(new UserError('Invalid cluster status.'));
-    const info = db.prepare('UPDATE incident_clusters SET status = ? WHERE id = ?').run(status, Number(req.params.id));
-    if (!info.changes) return next(new UserError('Cluster not found.', 404));
+    const { changes } = await db.run('UPDATE incident_clusters SET status = ? WHERE id = ?', [status, toId(req.params.id)]);
+    if (!changes) return next(new UserError('Cluster not found.', 404));
     res.json({ ok: true, status });
   });
 
-  r.post('/posts/:id/moderate', (req, res, next) => {
+  r.post('/posts/:id/moderate', async (req, res, next) => {
     const decision = req.body?.decision;
     if (!['publish', 'withhold'].includes(decision)) return next(new UserError('Decision must be "publish" or "withhold".'));
-    const info = db.prepare(`UPDATE posts SET status = ? WHERE id = ? AND status = 'pending_moderation'`)
-      .run(decision === 'publish' ? 'published' : 'withheld', Number(req.params.id));
-    if (!info.changes) return next(new UserError('Post is not awaiting moderation.', 404));
+    const { changes } = await db.run(`UPDATE posts SET status = ? WHERE id = ? AND status = 'pending_moderation'`,
+      [decision === 'publish' ? 'published' : 'withheld', toId(req.params.id)]);
+    if (!changes) return next(new UserError('Post is not awaiting moderation.', 404));
     res.json({ ok: true });
   });
 
-  r.get('/attachments/:postId', (req, res, next) => {
-    const file = db.prepare('SELECT mime_type, data FROM attachments WHERE post_id = ?').get(Number(req.params.postId));
+  r.get('/attachments/:postId', async (req, res, next) => {
+    const file = await db.get('SELECT mime_type, data FROM attachments WHERE post_id = ?', [toId(req.params.postId)]);
     if (!file) return next(new UserError('No attachment.', 404));
     res.set({ 'Content-Type': file.mime_type, 'Cache-Control': 'no-store', 'Content-Disposition': 'inline' });
     res.send(Buffer.from(file.data));
