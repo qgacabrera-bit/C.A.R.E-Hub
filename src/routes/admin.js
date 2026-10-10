@@ -9,8 +9,17 @@ import { rateLimit } from './rateLimit.js';
 // review workflow and make publish/withhold moderation decisions, but cannot edit narratives, see
 // author tokens, or contact students.
 
+export const ROLES = { STUDENT: 'student', ADMIN: 'admin' };
+
 const SESSION_TTL = 8 * 60 * 60 * 1000;
-const sessions = new Map();
+const sessions = new Map(); // token -> { role, expires }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions) if (session.expires < now) sessions.delete(token);
+}, 10 * 60 * 1000).unref();
+
+const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
 
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -18,14 +27,22 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-function requireAdmin(req, _res, next) {
-  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const session = sessions.get(token);
-  if (!session || session.expires < Date.now()) {
-    sessions.delete(token);
-    return next(new UserError('Counselor session expired. Please sign in again.', 401));
-  }
-  next();
+// Everyone without a live session is a student - the public page needs no login.
+function roleOf(req) {
+  const session = sessions.get(bearer(req));
+  return session && session.expires >= Date.now() ? session.role : ROLES.STUDENT;
+}
+
+function requireRole(...allowed) {
+  return (req, _res, next) => {
+    const role = roleOf(req);
+    if (role === ROLES.STUDENT) {
+      sessions.delete(bearer(req));
+      return next(new UserError('Counselor session expired. Please sign in again.', 401));
+    }
+    if (!allowed.includes(role)) return next(new UserError('You do not have permission to do that.', 403));
+    next();
+  };
 }
 
 const parse = (json) => {
@@ -45,11 +62,19 @@ export function adminRouter(db) {
   r.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many sign-in attempts. Try again later.' }), (req, res, next) => {
     if (!safeEqual(req.body?.passcode ?? '', config.adminPasscode)) return next(new UserError('Incorrect passcode.', 401));
     const token = crypto.randomBytes(32).toString('hex');
-    sessions.set(token, { expires: Date.now() + SESSION_TTL });
-    res.json({ token, expires_in: SESSION_TTL / 1000 });
+    sessions.set(token, { role: ROLES.ADMIN, expires: Date.now() + SESSION_TTL });
+    res.json({ token, role: ROLES.ADMIN, expires_in: SESSION_TTL / 1000 });
   });
 
-  r.use(requireAdmin);
+  // Public: a missing, fake or expired token simply reports the default student role.
+  r.get('/whoami', (req, res) => res.json({ role: roleOf(req) }));
+
+  r.use(requireRole(ROLES.ADMIN));
+
+  r.post('/logout', (req, res) => {
+    sessions.delete(bearer(req));
+    res.json({ ok: true });
+  });
 
   r.get('/overview', (_req, res) => {
     const since30 = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();

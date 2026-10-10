@@ -50,7 +50,8 @@ $('#login-form').addEventListener('submit', async (e) => {
     $('#login-error').hidden = false;
   }
 });
-$('#logout').addEventListener('click', () => {
+$('#logout').addEventListener('click', async () => {
+  await call('/api/admin/logout', { method: 'POST' }).catch(() => {});
   setToken(null);
   showDashboard(false);
 });
