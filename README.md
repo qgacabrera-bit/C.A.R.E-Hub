@@ -19,7 +19,7 @@ npm run seed         # wipe and reload the synthetic dataset
 * Student app: `http://localhost:3000/`
 * Counselor portal: `http://localhost:3000/admin` (demo passcode `counselor-demo`)
 
-Requires Node.js 22.13+. Production data lives in Supabase Postgres (`DATABASE_URL`); without it, local development uses an embedded Postgres (PGlite) under `data/pglite`.
+Requires Node.js 22.13+. Production data lives in Supabase Postgres (`DATABASE_URL`); without it, local development uses an embedded Postgres (PGlite) under `data/pglite`. If the project is inside OneDrive, it is stored in `%LOCALAPPDATA%\care-hub\pglite` instead, because PGlite cannot open files OneDrive has synced; set `PGLITE_DATA_DIR` to choose another folder.
 
 ### Optional: AI-assisted review (Gemini or Claude)
 Set `GEMINI_API_KEY` (Google Gemini, default model `gemini-flash-latest`) or `ANTHROPIC_API_KEY` (Claude, `claude-opus-5-5`) to have an AI model double-check sanitization, add context to urgency scores, power the Adviser chat, and draft reports. With both set, Gemini is used unless `CARE_LLM_PROVIDER=anthropic`. Without a key, the app runs entirely on its deterministic offline engine; if a key is rejected or a request fails, it falls back to that engine automatically. Student messages are scrubbed of names, numbers and handles before anything is sent to the AI provider.
@@ -58,7 +58,7 @@ To put it online elsewhere, deploy the repository to any Node or Docker host (Ra
 | Health check | `GET /healthz` |
 | Env (required) | `NODE_ENV=production`, `DATABASE_URL=<Supabase Transaction pooler string>`, `ADMIN_PASSCODE=<12+ chars>`, `TRUST_PROXY=1` |
 | Env (optional) | `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`, `CARE_LLM`, `CARE_LLM_PROVIDER` |
-| Storage | Supabase Postgres. The tables come from `supabase/migrations/` and must already exist; the app never creates or alters them |
+| Storage | Supabase Postgres. The tables come from `supabase/migrations/` and must already exist; the app never creates or alters them. Run every file in order in the Supabase SQL editor (`0002_incident_articles.sql` adds resolution articles) |
 
 ```bash
 docker build -t care-hub .

@@ -7,6 +7,7 @@ import { authorTokenFromSecret, displayHandle, submitPost, UserError } from '../
 import { scoreSeverity, severityLabel } from '../pipeline/severity.js';
 import { scrubText } from '../pipeline/scrubber.js';
 import { rateLimit } from './rateLimit.js';
+import { STUDENT_GUIDANCE, DEFAULT_GUIDANCE, CRISIS_LINE, toParagraphs } from '../articles.js';
 
 // Supportive reactions only (stored keys are stable; icons and wording live in the client). One per student per post.
 export const REACTIONS = {
@@ -45,8 +46,44 @@ async function reactionCounts(db, postIds) {
   return map;
 }
 
-/** Pattern-level public notices for high-priority reports. Never includes narrative text. */
+const longDate = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+const ADDRESSED = 'Addressed by student welfare services';
+
+/**
+ * Counselor-reviewed articles about resolved recurring incidents. Shown for 30 days after publishing,
+ * and only while the incident stays resolved (a new report reopens it and hides the article).
+ */
+async function publishedArticles(db) {
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const rows = await db.all(`SELECT a.headline, a.summary, a.body, a.published_at, c.incident_type, c.location_tag
+                             FROM incident_articles a JOIN incident_clusters c ON c.id = a.cluster_id
+                             WHERE a.status = 'published' AND c.status = 'resolved' AND c.incident_type != 'Mental Health' AND a.published_at >= ?
+                             ORDER BY a.published_at DESC`, [since]);
+  return rows.map((a) => ({
+    kind: 'article',
+    category: a.incident_type,
+    location: a.location_tag,
+    updated_at: a.published_at,
+    status: ADDRESSED,
+    headline: a.headline,
+    summary: a.summary,
+    text: a.summary,
+    article: toParagraphs(a.body),
+    byline: 'Reviewed and published by student welfare services',
+  }));
+}
+
+/**
+ * Campus updates for the feed: published resolution articles first, then automatic pattern-level
+ * notices for high-priority reports. Never includes narrative text.
+ */
 async function campusNotices(db) {
+  const articles = await publishedArticles(db);
+  const covered = new Set(articles.map((a) => `${a.category}|${a.location}`)); // an article replaces the automatic notice
+  return [...articles, ...(await patternNotices(db)).filter((n) => !covered.has(`${n.category}|${n.location}`))];
+}
+
+async function patternNotices(db) {
   const since = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
   const rows = await db.all(`SELECT p.category, p.location_tag, p.risk_indicators, p.created_at, c.status AS cluster_status
                              FROM posts p LEFT JOIN incident_clusters c ON c.id = p.cluster_id
@@ -54,9 +91,10 @@ async function campusNotices(db) {
   const groups = new Map();
   for (const r of rows) {
     const key = `${r.category}|${r.location_tag}`;
-    const g = groups.get(key) ?? { category: r.category, location: r.location_tag, indicators: new Set(), count: 0, last: r.created_at, resolved: true };
+    const g = groups.get(key) ?? { category: r.category, location: r.location_tag, indicators: new Set(), count: 0, first: r.created_at, last: r.created_at, resolved: true };
     JSON.parse(r.risk_indicators).forEach((i) => g.indicators.add(i));
     g.count += 1;
+    if (r.created_at < g.first) g.first = r.created_at;
     if (r.created_at > g.last) g.last = r.created_at;
     if (r.cluster_status !== 'resolved') g.resolved = false;
     groups.set(key, g);
@@ -65,13 +103,30 @@ async function campusNotices(db) {
     .sort((a, b) => b.last.localeCompare(a.last))
     .map((g) => {
       const descriptors = DESCRIPTOR_ORDER.filter((d) => g.indicators.has(d)).slice(0, 2);
-      const what = (g.indicators.has('repeated pattern reported') ? 'repeated ' : '') + (descriptors.length ? descriptors.join(' and ') : `${g.category.toLowerCase()} concerns`);
+      const repeated = g.indicators.has('repeated pattern reported') ? 'repeated ' : '';
+      const what = repeated + (descriptors.length ? descriptors.join(' and ') : `${g.category.toLowerCase()} concerns`);
+      const lead = repeated + (descriptors[0] ?? `${g.category.toLowerCase()} concerns`); // headlines name only the main concern
+      const status = g.resolved ? ADDRESSED : 'Pending counselor review';
+      const summary = `Reports have been noted regarding ${what} around the ${g.location}. This concern has been logged and forwarded to student welfare services for monitoring.`;
+      const span = longDate(g.first) === longDate(g.last) ? `on ${longDate(g.last)}` : `between ${longDate(g.first)} and ${longDate(g.last)}`;
       return {
+        kind: 'notice',
         category: g.category,
         location: g.location,
         updated_at: g.last,
-        status: g.resolved ? 'Addressed by student welfare services' : 'Pending counselor review',
-        text: `Reports have been noted regarding ${what} around the ${g.location}. This concern has been logged and forwarded to student welfare services for monitoring.`,
+        status,
+        headline: `${lead.charAt(0).toUpperCase()}${lead.slice(1)} reported around the ${g.location}`,
+        summary,
+        text: summary, // kept for older clients
+        article: [
+          summary,
+          `${g.count > 1 ? 'Several anonymous reports were' : 'An anonymous report was'} received ${span}. Identifying details were removed before anything was shared, and no individual has been named or found at fault.`,
+          g.resolved
+            ? 'Student welfare services have reviewed this concern and marked it as addressed. If something similar happens again, a new report helps counselors see whether the pattern has returned.'
+            : 'A counselor is reviewing the reports to decide on the next steps, such as closer monitoring of the area. This update will change once the review moves forward.',
+          STUDENT_GUIDANCE[g.category] ?? DEFAULT_GUIDANCE,
+          CRISIS_LINE,
+        ],
       };
     });
 }

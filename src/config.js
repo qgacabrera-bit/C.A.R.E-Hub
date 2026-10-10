@@ -1,14 +1,27 @@
 // Central configuration. Everything here is safe to commit: no secrets, demo-only contacts.
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// PGlite cannot open database files once OneDrive has turned them into cloud files, so a project that
+// lives inside a OneDrive folder keeps its local database in the user's app data instead.
+function localDataDir() {
+  if (process.env.PGLITE_DATA_DIR) return path.resolve(process.env.PGLITE_DATA_DIR);
+  const inProject = path.join(root, 'data', 'pglite');
+  const synced = [process.env.OneDrive, process.env.OneDriveConsumer, process.env.OneDriveCommercial]
+    .filter(Boolean)
+    .some((dir) => inProject.toLowerCase().startsWith(`${path.resolve(dir).toLowerCase()}${path.sep}`));
+  return synced ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'care-hub', 'pglite') : inProject;
+}
+
 export const config = {
   port: Number(process.env.PORT || 3000),
-  // Supabase Transaction pooler string. Empty = embedded Postgres (PGlite) under data/pglite for local dev.
+  // Supabase Transaction pooler string. Empty = embedded Postgres (PGlite) for local dev, stored in
+  // localDataDir (data/pglite, or outside OneDrive - see above; PGLITE_DATA_DIR overrides).
   databaseUrl: process.env.DATABASE_URL || '',
-  localDataDir: path.join(root, 'data', 'pglite'),
+  localDataDir: localDataDir(),
   publicDir: path.join(root, 'public'),
 
   isProduction: process.env.NODE_ENV === 'production',

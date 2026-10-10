@@ -4,6 +4,8 @@ import { config } from '../config.js';
 import { severityLabel } from '../pipeline/severity.js';
 import { UserError } from '../pipeline/ingest.js';
 import { rateLimit } from './rateLimit.js';
+import { LIMITS, articleIssues, draftArticle } from '../articles.js';
+import { llmStatus } from '../llm.js';
 
 // Counselor portal. Report content is read-only here: counselors can move a cluster through its
 // review workflow and make publish/withhold moderation decisions, but cannot edit narratives, see
@@ -58,6 +60,20 @@ const parse = (json) => {
     return [];
   }
 };
+
+// Wellbeing concerns are personal: they stay counselor-only and never get a public article.
+const PRIVATE_CATEGORIES = new Set(['Mental Health']);
+
+const shapeArticle = (a) => ({
+  headline: a.headline,
+  summary: a.summary,
+  body: a.body,
+  context: a.counselor_context,
+  source: a.source,
+  status: a.status,
+  updated_at: a.updated_at,
+  published_at: a.published_at,
+});
 
 export function adminRouter(db) {
   const r = express.Router();
@@ -135,6 +151,8 @@ export function adminRouter(db) {
       (p) => p.cluster_id,
     );
 
+    const articles = new Map((await db.all('SELECT * FROM incident_articles')).map((a) => [a.cluster_id, shapeArticle(a)]));
+
     const clusters = (await db.all(`SELECT c.*, MAX(p.severity_score) AS max_severity, ROUND(AVG(p.severity_score), 1)::float8 AS avg_severity,
                                            string_agg(p.risk_indicators, '|') AS indicator_blobs
                                     FROM incident_clusters c LEFT JOIN posts p ON p.cluster_id = c.id
@@ -152,6 +170,8 @@ export function adminRouter(db) {
         avg_severity: c.avg_severity ?? 1,
         indicators: [...new Set((c.indicator_blobs ?? '').split('|').filter(Boolean).flatMap(parse))].slice(0, 6),
         reports: (linked.get(c.id) ?? []).map(({ cluster_id, ...p }) => p),
+        article: articles.get(c.id) ?? null,
+        public_article_allowed: !PRIVATE_CATEGORIES.has(c.incident_type),
       }));
 
     const hotspots = (await db.all(`SELECT location_tag AS location, COUNT(*)::int AS reports, MAX(severity_score) AS max_severity,
@@ -170,15 +190,86 @@ export function adminRouter(db) {
         status: p.status, private_report: p.visibility === 'private', cluster_id: p.cluster_id, created_at: p.created_at,
       }));
 
-    res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports });
+    res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports, ai_drafting: llmStatus().enabled });
   });
 
   r.patch('/clusters/:id', async (req, res, next) => {
     const status = req.body?.status;
-    if (!['active', 'reviewing', 'resolved'].includes(status)) return next(new UserError('Invalid cluster status.'));
+    if (!['active', 'reviewing', 'resolved'].includes(status)) return next(new UserError('Invalid status.'));
     const { changes } = await db.run('UPDATE incident_clusters SET status = ? WHERE id = ?', [status, toId(req.params.id)]);
-    if (!changes) return next(new UserError('Cluster not found.', 404));
+    if (!changes) return next(new UserError('Recurring incident not found.', 404));
     res.json({ ok: true, status });
+  });
+
+  // ---- Resolution articles: written after a recurring incident is resolved, reviewed, then published ----
+
+  async function loadIncident(id) {
+    const c = await db.get('SELECT * FROM incident_clusters WHERE id = ?', [toId(id)]);
+    if (!c) throw new UserError('Recurring incident not found.', 404);
+    if (PRIVATE_CATEGORIES.has(c.incident_type)) throw new UserError('Wellbeing concerns stay counselor-only, so they never get a public article.', 403);
+    const blobs = await db.all('SELECT risk_indicators FROM posts WHERE cluster_id = ?', [c.id]);
+    return {
+      id: c.id,
+      status: c.status,
+      category: c.incident_type,
+      location: c.location_tag,
+      report_count: c.report_count,
+      first_reported_at: c.first_reported_at,
+      last_reported_at: c.last_reported_at,
+      indicators: [...new Set(blobs.flatMap((b) => parse(b.risk_indicators)))].filter((i) => i !== 'repeated pattern reported'),
+    };
+  }
+
+  const text = (v, max) => String(v ?? '').replace(/\r\n/g, '\n').trim().slice(0, max);
+
+  r.post('/clusters/:id/article/draft', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many drafts in a short time. Try again in a few minutes.' }), async (req, res, next) => {
+    try {
+      const incident = await loadIncident(req.params.id);
+      const context = text(req.body?.context, LIMITS.context[1]);
+      if (context.length < LIMITS.context[0]) {
+        return next(new UserError(`Add more context first (at least ${LIMITS.context[0]} characters): what was done, what changed, and what students should know.`));
+      }
+      res.json(await draftArticle(incident, context));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Save a draft, or publish after review. Publishing needs a resolved incident, the counselor's review
+  // confirmation, and a draft that passes the identity / blame checks.
+  r.put('/clusters/:id/article', async (req, res, next) => {
+    try {
+      const incident = await loadIncident(req.params.id);
+      const b = req.body ?? {};
+      const article = {
+        headline: text(b.headline, LIMITS.headline[1] + 1).replace(/\s+/g, ' '),
+        summary: text(b.summary, LIMITS.summary[1] + 1).replace(/\s+/g, ' '),
+        body: text(b.body, LIMITS.body[1] + 1),
+        context: text(b.context, LIMITS.context[1]),
+        source: ['counselor', 'ai', 'template'].includes(b.source) ? b.source : 'counselor',
+      };
+      const publish = b.publish === true;
+      if (publish) {
+        if (incident.status !== 'resolved') throw new UserError('Mark the recurring incident as resolved before publishing its article.', 409);
+        if (b.reviewed !== true) throw new UserError('Confirm that you reviewed the article before publishing.');
+        const issues = articleIssues(article);
+        if (issues.length) return res.status(422).json({ error: 'Fix these before publishing:', issues });
+      } else if (!article.headline && !article.summary && !article.body) {
+        throw new UserError('There is nothing to save yet.');
+      }
+
+      const now = new Date().toISOString();
+      await db.run(`INSERT INTO incident_articles (cluster_id, headline, summary, body, counselor_context, source, status, created_at, updated_at, published_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (cluster_id) DO UPDATE SET headline = EXCLUDED.headline, summary = EXCLUDED.summary, body = EXCLUDED.body,
+                      counselor_context = EXCLUDED.counselor_context, source = EXCLUDED.source, status = EXCLUDED.status,
+                      updated_at = EXCLUDED.updated_at, published_at = EXCLUDED.published_at`,
+      [incident.id, article.headline, article.summary, article.body, article.context, article.source,
+        publish ? 'published' : 'draft', now, now, publish ? now : null]);
+      res.json({ article: shapeArticle(await db.get('SELECT * FROM incident_articles WHERE cluster_id = ?', [incident.id])) });
+    } catch (e) {
+      next(e);
+    }
   });
 
   r.post('/posts/:id/moderate', async (req, res, next) => {

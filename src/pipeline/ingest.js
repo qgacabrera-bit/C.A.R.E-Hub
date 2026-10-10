@@ -158,7 +158,7 @@ export function buildSummary({ category, location, score, indicators, cluster, c
     indicators.length ? `Indicators observed: ${indicators.join('; ')}.` : 'No specific risk indicators matched.',
   ];
   if (cluster) {
-    parts.push(`Pattern observed: linked to Cluster #${cluster.id} "${cluster.cluster_title}" (${cluster.report_count} reports since ${cluster.first_reported_at.slice(0, 10)}).`);
+    parts.push(`Pattern observed: linked to recurring incident #${cluster.id} "${cluster.cluster_title}" (${cluster.report_count} reports since ${cluster.first_reported_at.slice(0, 10)}).`);
   }
   if (crisis) parts.push('Possible risk to the reporting student\'s own safety - prioritize wellbeing outreach via the Guidance Office.');
   if (privateReport) parts.push("Sent privately through the C.A.R.E. Adviser at the student's request; it is not shown on the public feed.");

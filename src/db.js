@@ -135,5 +135,5 @@ export async function openDb(target = config.databaseUrl) {
 }
 
 export async function resetDb(db) {
-  await db.exec('TRUNCATE reactions, escalations, attachments, posts, incident_clusters RESTART IDENTITY CASCADE');
+  await db.exec('TRUNCATE reactions, escalations, attachments, incident_articles, posts, incident_clusters RESTART IDENTITY CASCADE');
 }

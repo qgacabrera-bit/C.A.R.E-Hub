@@ -1,6 +1,6 @@
 import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, storage } from './common.js';
 
-const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed', updatesOpen: false, privateDraft: null, chatBusy: false };
+const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed',privateDraft: null, chatBusy: false };
 
 // Identity colors for topic dots (decorative; topic names are always shown as text).
 
@@ -333,36 +333,145 @@ function renderPost(p) {
   );
 }
 
-function renderNotice(n) {
-  return el('article', { class: 'card post notice' },
-    el('div', { class: 'notice-title' }, 'Campus Incident Update (Sanitized)', el('span', { class: 'hashtag', text: '#CampusSafety' })),
-    el('p', { class: 'post-body' }, n.text),
-    el('div', { class: 'meta-row' }, el('span', { class: 'pill pill-status', text: n.status }), el('span', { class: 'post-sub', text: `Updated ${timeAgo(n.updated_at)}` })),
-  );
-}
-
 function feedSection(label, key, cards) {
   return el('section', { class: 'feed-section', 'aria-labelledby': `section-${key}` },
     el('h2', { class: 'section-label', id: `section-${key}`, text: label }),
     el('div', { class: 'feed' }, ...cards));
 }
 
-// All campus incident updates fold into one summary card that expands in place.
-function updatesSummary(notices) {
-  const n = notices.length;
-  const list = el('div', { class: 'updates-list', id: 'updates-list', hidden: !state.updatesOpen }, ...notices.map(renderNotice));
-  const toggleText = el('span', { text: state.updatesOpen ? 'Hide' : 'Show' });
-  const summary = el('button', { class: 'card updates-summary', type: 'button', 'aria-expanded': String(state.updatesOpen), 'aria-controls': 'updates-list' },
-    el('span', { class: 'updates-summary-text' }, el('span', { class: 'updates-summary-title', text: `${n} campus update${n === 1 ? '' : 's'}` })),
-    el('span', { class: 'updates-summary-toggle' }, toggleText, svgIcon('i-chevron')),
+// ---------------------------------------------------------------------------------------------
+// Campus updates: newspaper-style slides (headline, summary, picture) that rotate on their own.
+// Tapping one opens the full article in a dialog.
+// ---------------------------------------------------------------------------------------------
+const UPDATE_ROTATE_MS = 7000;
+const UPDATE_ICONS = { Bullying: 'i-users', Cyberbullying: 'i-chat', 'Peer Pressure': 'i-ear', 'Campus Safety': 'i-shield' };
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let stopUpdatesCarousel = () => {};
+let updateDialog = null;
+
+// The "photo" is an illustration of the topic and place; updates never carry real photos of students.
+function updatePicture(n, cls) {
+  return el('div', { class: `update-picture ${cls}`, 'aria-hidden': 'true' },
+    svgIcon(UPDATE_ICONS[n.category] ?? 'i-shield', 'icon update-picture-icon'),
+    el('span', { class: 'update-picture-caption', text: n.location }));
+}
+
+// Counselor-written articles about resolved incidents are labelled apart from automatic notices.
+const updateKicker = (n) => el('div', { class: 'update-kicker' },
+  el('span', { text: n.kind === 'article' ? 'Resolved · Campus update' : 'Campus update' }), el('span', { class: 'hashtag', text: hashtag(n.category) }));
+const updateMeta = (n) => el('div', { class: 'meta-row' },
+  el('span', { class: 'pill pill-status', text: n.status }), el('span', { class: 'post-sub', text: `Updated ${timeAgo(n.updated_at)}` }));
+
+function openUpdateArticle(n, onClose) {
+  if (!updateDialog) {
+    updateDialog = el('dialog', { class: 'update-dialog', 'aria-labelledby': 'update-dialog-title' });
+    updateDialog.addEventListener('click', (e) => e.target === updateDialog && updateDialog.close()); // backdrop click
+    document.body.append(updateDialog);
+  }
+  updateDialog.replaceChildren(
+    el('button', { type: 'button', class: 'icon-btn update-dialog-close', 'aria-label': 'Close article', text: '×', onclick: () => updateDialog.close() }),
+    updatePicture(n, 'update-picture-banner'),
+    el('div', { class: 'update-article' },
+      updateKicker(n),
+      el('h2', { class: 'update-article-headline', id: 'update-dialog-title', text: n.headline }),
+      updateMeta(n),
+      n.byline ? el('p', { class: 'update-byline', text: n.byline }) : null,
+      el('div', { class: 'update-article-body' }, ...n.article.map((p) => el('p', { text: p }))),
+      el('p', { class: 'update-article-note', text: 'Campus updates summarize anonymous, sanitized reports. They are not a finding of fault and do not replace the school\'s formal procedures.' }),
+    ),
   );
-  summary.addEventListener('click', () => {
-    state.updatesOpen = !state.updatesOpen;
-    summary.setAttribute('aria-expanded', String(state.updatesOpen));
-    toggleText.textContent = state.updatesOpen ? 'Hide' : 'Show';
-    list.hidden = !state.updatesOpen;
+  updateDialog.addEventListener('close', onClose, { once: true });
+  updateDialog.showModal();
+  updateDialog.scrollTop = 0;
+}
+
+function updatesCarousel(notices) {
+  stopUpdatesCarousel();
+  const total = notices.length;
+  const holds = new Set(); // reasons the rotation is paused (hover, keyboard focus, open article)
+  let index = 0;
+  let timer = null;
+
+  const slides = notices.map((n, i) => el('article', { class: 'update-slide', 'aria-roledescription': 'slide', 'aria-label': `${i + 1} of ${total}` },
+    el('div', { class: 'update-copy' },
+      updateKicker(n),
+      el('h3', { class: 'update-headline' },
+        el('button', { type: 'button', class: 'update-open', 'aria-haspopup': 'dialog', text: n.headline, onclick: () => {
+          hold('article');
+          openUpdateArticle(n, () => release('article'));
+        } })),
+      el('p', { class: 'update-summary', text: n.summary }),
+      updateMeta(n),
+    ),
+    updatePicture(n, 'update-picture-slide'),
+  ));
+  const track = el('div', { class: 'updates-track' }, ...slides);
+  const dots = notices.map((_, i) => el('button', { type: 'button', class: 'update-dot', 'aria-label': `Show update ${i + 1} of ${total}`, onclick: () => go(i) }));
+  const root = el('div', { class: 'card updates-carousel', role: 'region', 'aria-roledescription': 'carousel', 'aria-label': 'Campus updates' },
+    el('div', { class: 'updates-viewport' }, track),
+    total > 1 ? el('div', { class: 'update-dots' }, ...dots) : null);
+
+  function go(i) {
+    const hadFocus = slides[index].contains(document.activeElement);
+    index = (i + total) % total;
+    track.style.transform = `translateX(-${index * 100}%)`;
+    slides.forEach((s, j) => (s.inert = j !== index));
+    dots.forEach((d, j) => (j === index ? d.setAttribute('aria-current', 'true') : d.removeAttribute('aria-current')));
+    if (hadFocus) slides[index].querySelector('.update-open').focus({ preventScroll: true });
+    schedule();
+  }
+  function schedule() {
+    clearTimeout(timer);
+    if (total < 2 || holds.size || reducedMotion.matches || document.hidden) return;
+    timer = setTimeout(() => root.isConnected && go(index + 1), UPDATE_ROTATE_MS);
+  }
+  function hold(why) {
+    holds.add(why);
+    clearTimeout(timer);
+  }
+  function release(why) {
+    holds.delete(why);
+    schedule();
+  }
+
+  root.addEventListener('pointerenter', (e) => e.pointerType === 'mouse' && hold('hover'));
+  root.addEventListener('pointerleave', () => release('hover'));
+  root.addEventListener('focusin', (e) => e.target.matches(':focus-visible') && hold('focus'));
+  root.addEventListener('focusout', (e) => !root.contains(e.relatedTarget) && release('focus'));
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') go(index + 1);
+    else if (e.key === 'ArrowLeft') go(index - 1);
   });
-  return el('div', {}, summary, list);
+
+  // Swipe between slides on touch screens; a swipe must not also open the article.
+  let startX = null;
+  let swiped = false;
+  root.addEventListener('pointerdown', (e) => (startX = e.clientX));
+  root.addEventListener('pointerup', (e) => {
+    const dx = startX == null ? 0 : e.clientX - startX;
+    startX = null;
+    if (total > 1 && Math.abs(dx) > 40) {
+      swiped = true;
+      go(index + (dx < 0 ? 1 : -1));
+    }
+  });
+  root.addEventListener('click', (e) => {
+    if (!swiped) return;
+    swiped = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  document.addEventListener('visibilitychange', schedule);
+  reducedMotion.addEventListener('change', schedule);
+  stopUpdatesCarousel = () => {
+    clearTimeout(timer);
+    document.removeEventListener('visibilitychange', schedule);
+    reducedMotion.removeEventListener('change', schedule);
+  };
+
+  go(0);
+  return root;
 }
 
 let feedSeq = 0;
@@ -374,7 +483,8 @@ async function loadFeed() {
     const data = await api(`/api/feed${q}`, { headers: sessionHeaders() });
     if (seq !== feedSeq) return; // a newer filter change won
     const sections = [];
-    if (data.notices.length) sections.push(feedSection('Campus updates', 'updates', [updatesSummary(data.notices)]));
+    if (data.notices.length) sections.push(feedSection('Campus updates', 'updates', [updatesCarousel(data.notices)]));
+    else stopUpdatesCarousel();
     sections.push(feedSection('From students', 'students',
       data.posts.length ? data.posts.map(renderPost) : [el('div', { class: 'card empty', text: 'No posts in these topics yet.' })]));
     feed.replaceChildren(...sections);
