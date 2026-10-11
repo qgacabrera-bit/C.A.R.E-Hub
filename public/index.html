@@ -143,8 +143,9 @@
           <svg class="icon"><use href="#i-menu"/></svg>
         </button>
         <a class="brand" href="/">
-          <span class="brand-mark" aria-hidden="true">C</span>
-          <span><span class="brand-name">C.A.R.E. Hub</span><span class="brand-sub">Campus Anonymous Reporting &amp; Escalation</span></span>
+          <!-- Logo: two speech bubbles in conversation (a safe space to talk, together) with a heart in the front one (support). -->
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path class="mark-back" d="M20 2H31A7 7 0 0 1 38 9V26.5C38 27.2 37.2 27.5 36.7 27L30.7 21H20A7 7 0 0 1 13 14V9A7 7 0 0 1 20 2Z"/><path class="mark-front" stroke-width="2.4" d="M9 13H21A7 7 0 0 1 28 20V26A7 7 0 0 1 21 33H15L10.2 37.4C9.7 37.9 9 37.6 9 36.9V33A7 7 0 0 1 2 26V20A7 7 0 0 1 9 13Z"/><path class="mark-heart" d="M15 27.2C10.5 24.4 8.8 22.3 8.8 20.1 8.8 18.5 10 17.2 11.6 17.2 13.1 17.2 14.2 18 15 19.3 15.8 18 16.9 17.2 18.4 17.2 20 17.2 21.2 18.5 21.2 20.1 21.2 22.3 19.5 24.4 15 27.2Z"/></svg>
+          <span><span class="brand-name">C<i>.</i>A<i>.</i>R<i>.</i>E<i>.</i> <b>Hub</b></span><span class="brand-sub">Campus Anonymous Reporting &amp; Escalation</span></span>
         </a>
       </div>
       <div class="topbar-right">
@@ -281,7 +282,7 @@
             <ul>
               <li>No account and no IP address are stored. Your "Student #" handle comes from a random key kept only in this browser.</li>
               <li>Names, phone numbers, emails, student IDs and social handles are replaced with tags like [Student A] before anything is saved.</li>
-              <li>A summary of every concern you share, with names removed, always goes to the Guidance team, whether it is posted on the feed or sent privately. Chats with the C.A.R.E. Adviser are not saved unless you choose to post or send them.</li>
+              <li>A summary of every concern you share, with names removed, always goes to the Guidance team, whether it is posted on the feed or sent privately. Chats with Kali, the C.A.R.E. Adviser, are not saved unless you choose to post or send them.</li>
               <li>Urgent reports (threats, harassment, self-harm) skip the public feed and go privately to counselors.</li>
               <li>Photos are only ever seen by counselors, with location metadata removed.</li>
               <li>Similar reports are grouped into concerns so counselors can act. Concerns show counts, never your words.</li>
@@ -314,26 +315,26 @@
     </aside>
   </div>
 
-  <!-- Adviser chat widget: the adviser stands on her chat button so students see someone is there to help -->
+  <!-- Adviser chat widget: Kali stands on her chat button so students see someone is there to help -->
   <div class="adviser-launcher" id="adviser-launcher">
     <div class="adviser-hello" id="adviser-hello" hidden>
-      <button class="adviser-hello-text" type="button" data-open-adviser>Hi! I'm here if you need someone to talk to.</button>
+      <button class="adviser-hello-text" type="button" data-open-adviser>Hi, I'm Kali! I'm here if you need someone to talk to.</button>
       <button class="adviser-hello-close" type="button" id="adviser-hello-close" aria-label="Hide this message">×</button>
     </div>
     <!-- Same mascot twice: the dark-theme copy has its cut-out edges cleaned so no light fringe shows on the dark page.
          Which one shows is decided by theme tokens; the hidden one is lazy-loaded so it isn't downloaded. -->
     <img class="adviser-figure adviser-figure--light" src="/img/care-adviser.png" alt="" width="269" height="360" decoding="async" loading="lazy" data-open-adviser>
     <img class="adviser-figure adviser-figure--dark" src="/img/care-adviser-on-dark.png" alt="" width="269" height="360" decoding="async" loading="lazy" data-open-adviser>
-    <button class="adviser-fab" type="button" id="adviser-fab" aria-label="Open the C.A.R.E. Adviser chat" aria-expanded="false" aria-controls="adviser">
-      <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span class="fab-label">C.A.R.E. Adviser</span>
+    <button class="adviser-fab" type="button" id="adviser-fab" aria-label="Chat with Kali, your C.A.R.E. Adviser" aria-expanded="false" aria-controls="adviser">
+      <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span class="fab-label">Chat with Kali</span>
     </button>
   </div>
-  <section class="adviser" id="adviser" aria-label="C.A.R.E. Adviser chat" hidden>
+  <section class="adviser" id="adviser" aria-label="Chat with Kali, your C.A.R.E. Adviser" hidden>
     <div class="adviser-head">
       <img class="adviser-head-avatar" src="/img/care-adviser-chibi.png" alt="" width="40" height="40">
       <div class="adviser-head-text">
-        <strong>C.A.R.E. Adviser</strong>
-        <p id="adviser-mode">AI support assistant · not a counselor · chats are not stored on our servers</p>
+        <strong>Kali <span class="adviser-head-role">· C.A.R.E. Adviser</span></strong>
+        <p id="adviser-mode">AI support companion · not a counselor · chats are not stored on our servers</p>
       </div>
       <button class="icon-btn" type="button" id="adviser-clear" aria-label="Start a new conversation" title="Start a new conversation"><svg class="icon"><use href="#i-refresh"/></svg></button>
       <button class="icon-btn" type="button" id="adviser-close" aria-label="Close adviser">×</button>

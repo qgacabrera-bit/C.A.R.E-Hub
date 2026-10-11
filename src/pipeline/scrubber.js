@@ -51,6 +51,7 @@ whatsapp google classroom zoom meet reddit roblox valorant mobile legends ml
 also and but or so because if please help hello hi hey sorry thanks thank okay ok yes no not just still even again
 what why how who where which really very maybe anyway anyone everything nothing something
 first second third fourth 1st 2nd 3rd 4th upper lower old new
+kali kalinga
 `.trim().split(/\s+/));
 
 // First names that are also everyday English words: never redacted when typed in lowercase.

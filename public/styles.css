@@ -71,6 +71,9 @@
   --primary-hover: #325B79;   /* darker step of primary for hover (not in brief) */
   --on-primary: #FFFFFF;
   --primary-tint: #E1EAF1;
+  --logo-slate: #3E5468;      /* wordmark "C.A.R.E." and the C tile: 7.7:1 on card */
+  --logo-sage: #5B8160;       /* wordmark dots and "Hub": deepened from the logo's #9DB89A (2.1:1) to 4.35:1 */
+  --mark-back: #A8C9A4; --mark-heart: #E4EFE1; /* logo: the sage bubble behind, and the heart in the slate one */
   --crisis: #D34343;          /* AA: brief #D64545 -> 4.51:1 with white text (was 4.38). Hotline call buttons ONLY. */
   --crisis-hover: #B83939;
   --on-crisis: #FFFFFF;
@@ -118,6 +121,7 @@
     --bg: #10191B; --card: #172326; --raised: #1F2E32; --border: #2A3B40; --control-border: #668187;
     --text: #E6EEEF; --muted: #93A6A9;
     --primary: #7CC4C9; --primary-hover: #96D2D6; --on-primary: #10191B; --primary-tint: #1E3D42;
+    --logo-slate: #C9D7E3; --logo-sage: #A8C9A4; --mark-back: #5B8160; --mark-heart: #3E5468;
     --crisis: #F2857D; --crisis-hover: #F59C95; --on-crisis: #10191B;
     --danger: #E79AAE; --overlay: rgb(0 0 0 / 0.55);
     --shadow: none; --shadow-pop: 0 8px 22px rgb(0 0 0 / 0.28); --figure-shadow: 0 0 0 transparent;
@@ -132,6 +136,7 @@
   --bg: #10191B; --card: #172326; --raised: #1F2E32; --border: #2A3B40; --control-border: #668187;
   --text: #E6EEEF; --muted: #93A6A9;
   --primary: #7CC4C9; --primary-hover: #96D2D6; --on-primary: #10191B; --primary-tint: #1E3D42;
+    --logo-slate: #C9D7E3; --logo-sage: #A8C9A4; --mark-back: #5B8160; --mark-heart: #3E5468;
   --crisis: #F2857D; --crisis-hover: #F59C95; --on-crisis: #10191B;
   --danger: #E79AAE; --overlay: rgb(0 0 0 / 0.55);
   --shadow: none; --shadow-pop: 0 8px 22px rgb(0 0 0 / 0.28); --figure-shadow: 0 0 0 transparent;
@@ -175,12 +180,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); min-width: 0; }
-/* TODO: replace this lettered tile with a mark based on the C.A.R.E. Adviser mascot. */
-.brand-mark {
-  width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center;
-  background: var(--primary); color: var(--on-primary); font: 700 16px var(--font-head);
-}
-.brand-name { font-size: 18px; white-space: nowrap; }
+.brand-mark { width: 36px; height: 36px; flex: none; }
+.brand-mark .mark-back { fill: var(--mark-back); }
+.brand-mark .mark-front { fill: var(--logo-slate); stroke: var(--card); } /* the outline separates it from the bubble behind */
+.brand-mark .mark-heart { fill: var(--mark-heart); }
+/* Wordmark: slate letters, sage dots and "Hub". */
+.brand-name { font-size: 18px; white-space: nowrap; color: var(--logo-slate); }
+.brand-name i, .brand-name b { font-style: normal; font-weight: inherit; color: var(--logo-sage); }
 .brand-sub { display: block; font-size: 11.5px; color: var(--muted); font-weight: 500; white-space: nowrap; }
 .helpline-pill {
   display: inline-flex; align-items: center; gap: 7px; text-decoration: none; white-space: nowrap;
@@ -503,6 +509,16 @@ dialog.update-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(1
 .adviser-head { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
 .adviser-head-avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; }
 .adviser-head-text { flex: 1; min-width: 0; }
+/* "Kali is drafting…" - three dots that bounce in turn while she works. */
+.typing-dots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+.typing-dots span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: typing-dot 1.2s ease-in-out infinite; }
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-dot { 0%, 60%, 100% { opacity: 0.3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots span { animation: none; opacity: 0.6; }
+}
+.adviser-head-role { font-weight: 500; font-size: 13px; color: var(--muted); }
 .adviser-head p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 .adviser-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .msg { max-width: 85%; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
@@ -694,7 +710,7 @@ details summary { cursor: pointer; color: var(--brand); font-weight: 600; font-s
   .helpline-word { display: none; }   /* "1553" stays visible; the aria-label still says "helpline" */
 }
 @media (max-width: 340px) {
-  .brand-name { display: none; }      /* the "C" logo remains */
+  .brand-name { display: none; }      /* the logo mark remains */
 }
 
 /* All reports pop-up (admin): one reusable dialog, so reading a summary never stretches the table */

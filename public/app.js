@@ -708,7 +708,7 @@ $('#adviser-fab').addEventListener('click', openAdviser);
 $('#adviser-close').addEventListener('click', closeAdviser);
 document.querySelectorAll('[data-open-adviser]').forEach((n) => n.addEventListener('click', openAdviser));
 
-// "I'm here if you need someone to talk to" - shown until the student hides it once.
+// Kali's "I'm here if you need someone to talk to" - shown until the student hides it once.
 function initAdviserHello() {
   $('#adviser-hello').hidden = storage.get('care.helloHidden') === '1';
   $('#adviser-hello-close').addEventListener('click', () => {
@@ -749,7 +749,7 @@ function chatFormatting(text) {
 }
 
 const WELCOME = {
-  content: "Hi, I'm the C.A.R.E. Adviser. I'm here to listen and help you think things through. You don't need to share any names. Our chat isn't saved, but if you choose to post or report something, a summary with names removed is always shared with the Guidance team so someone can help. What's on your mind?",
+  content: "Hi, I'm Kali (short for \"Kalinga\", which means care), your AI C.A.R.E. Adviser. I'm here to listen and help you think things through, no names needed. Our chat isn't saved, but anything you post or report is shared with the Guidance team, with names removed. What's on your mind?",
   suggestions: [
     { label: 'Something happened at school', action: 'reply', text: 'Something happened at school' },
     { label: "I'm feeling stressed", action: 'reply', text: "I'm feeling stressed" },
@@ -809,7 +809,7 @@ async function sendChat(text) {
   if (state.chatBusy) return;
   state.chatBusy = true;
   pushMessage('user', text);
-  $('#adviser-log').append(adviserMessage('Adviser is typing…', 'muted'));
+  $('#adviser-log').append(adviserMessage('Kali is typing…', 'muted'));
   $('#adviser-log').scrollTop = $('#adviser-log').scrollHeight;
   try {
     const res = await api('/api/adviser/chat', { method: 'POST', body: { messages: chatPayload() } });
@@ -826,7 +826,7 @@ $('#adviser-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = $('#adviser-input');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || state.chatBusy) return; // keep what they typed until Kali is free
   input.value = '';
   sendChat(text);
 });
@@ -843,11 +843,33 @@ $('#adviser-clear').addEventListener('click', () => {
   openAdviser();
 });
 
-async function draftPost() {
+// While Kali writes a draft she shows it in the chat ("Kali is drafting…" with animated dots), and
+// the chat actions pause so a second tap can't start another draft.
+async function whileKaliDrafts(status, task) {
+  if (state.chatBusy) return;
+  state.chatBusy = true;
+  const controls = [$('#adviser-draft'), $('#adviser-private'), $('#adviser-form [type="submit"]')];
+  controls.forEach((b) => { b.disabled = true; });
+  renderChat(); // hides the quick-reply chips while she works
+  const bubble = adviserMessage(status, 'muted');
+  bubble.lastChild.append(el('span', { class: 'typing-dots', 'aria-hidden': 'true' }, el('span'), el('span'), el('span')));
+  $('#adviser-log').append(bubble);
+  $('#adviser-log').scrollTop = $('#adviser-log').scrollHeight;
+  try {
+    await task();
+  } finally {
+    state.chatBusy = false;
+    controls.forEach((b) => { b.disabled = false; });
+    renderChat();
+  }
+}
+
+function draftPost() {
   if (!hasStory()) return pushMessage('assistant', "Tell me a little about what happened first, and I'll turn it into a draft for you.", false);
-  const btn = $('#adviser-draft');
-  btn.disabled = true;
-  btn.textContent = 'Drafting…';
+  return whileKaliDrafts('Kali is drafting your post', draftPostNow);
+}
+
+async function draftPostNow() {
   try {
     const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: chatPayload() } });
     openComposer();
@@ -858,9 +880,6 @@ async function draftPost() {
     pushMessage('assistant', "I put a draft in the post composer. Please read it over and change anything that isn't right. Nothing is shared until you press Post Anonymously.");
   } catch (err) {
     pushMessage('assistant', err.message, false);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Draft a post';
   }
 }
 $('#adviser-draft').addEventListener('click', draftPost);
@@ -872,17 +891,14 @@ async function startPrivateReport() {
   if (!hasStory()) {
     return pushMessage('assistant', "I can send it privately to the counselors. First, tell me what happened: what, where, and how often. You don't need to use any names.", false);
   }
-  const btn = $('#adviser-private');
-  btn.disabled = true;
-  try {
-    const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: chatPayload() } });
-    state.privateDraft = { ...draft, unlinked: false, error: '' };
-    renderChat();
-  } catch (err) {
-    pushMessage('assistant', err.message, false);
-  } finally {
-    btn.disabled = false;
-  }
+  return whileKaliDrafts('Kali is writing up your private report', async () => {
+    try {
+      const draft = await api('/api/adviser/draft', { method: 'POST', body: { messages: chatPayload() } });
+      state.privateDraft = { ...draft, unlinked: false, error: '' };
+    } catch (err) {
+      pushMessage('assistant', err.message, false);
+    }
+  });
 }
 
 function privateReportCard(draft) {

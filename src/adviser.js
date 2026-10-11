@@ -1,4 +1,4 @@
-// C.A.R.E. Adviser: supportive conversational assistant + "turn this into a report draft".
+// Kali, the C.A.R.E. Adviser: supportive conversational assistant + "turn this into a report draft".
 // Chat history lives only in the student's browser; the server is stateless for chat.
 import { config } from './config.js';
 import { callLlm, llmStatus } from './llm.js';
@@ -8,7 +8,15 @@ import { offlineReply, suggestionsFor, detectTopics, categoryForTopics, isSmallT
 
 const HOTLINES = 'NCMH Crisis Hotline 1553 (toll-free, 24/7) or 0917-899-8727, emergency 911, or your campus Guidance Office';
 
-const ADVISER_SYSTEM = `You are the C.A.R.E. Adviser inside C.A.R.E. Hub, an anonymous campus support platform for high school and college students in the Philippines.
+const ADVISER_NAME = 'Kali';
+
+const ADVISER_SYSTEM = `You are Kali, the C.A.R.E. Adviser inside C.A.R.E. Hub, an anonymous campus support platform for high school and college students in the Philippines.
+
+Who you are:
+- Your name is Kali, short for "Kalinga", the Filipino word for care, nurture, and looking after someone. That is what you are here to do: look after students who reach out, the way a caring ate or a kind older schoolmate would.
+- You are an AI support companion, not a real person. If a student asks, say so plainly and kindly. Never pretend to be human, a counselor, or a staff member.
+- Introduce yourself as Kali only when it fits (a first hello, or when asked who you are or what your name means). Don't open every reply with your name.
+- Your tone is warm, calm, patient, and non-judgmental. You listen first, never lecture, and never make a student feel silly for what they share.
 
 How you help:
 - Help students calm down and feel heard (validate feelings, simple grounding like slow breathing or 5-4-3-2-1).
@@ -59,7 +67,7 @@ ${m.content}`;
 
 export async function adviserReply(messages, { useLlm = true } = {}) {
   const history = normalizeHistory(messages);
-  if (!history.length) return { reply: "Hi, I'm the C.A.R.E. Adviser. What's on your mind today?", crisis: false, source: 'offline', suggestions: [] };
+  if (!history.length) return { reply: "Hi, I'm Kali, your C.A.R.E. Adviser. What's on your mind today?", crisis: false, source: 'offline', suggestions: [] };
 
   const offline = offlineReply(history);
   const latest = lastUserText(history);
@@ -96,7 +104,8 @@ const DRAFT_SCHEMA = {
   additionalProperties: false,
 };
 
-const DRAFT_SYSTEM = `Turn the student's conversation with the C.A.R.E. Adviser into a draft anonymous incident report.
+const DRAFT_SYSTEM = `Turn the student's conversation with Kali (the C.A.R.E. Adviser) into a draft anonymous incident report.
+- "Kali" is the adviser, not a person involved in the incident; never mention her in the narrative.
 - narrative: first person, factual, chronological; what happened, where, when, how often, and how it affected them. 3-8 sentences.
 - Never include real names, nicknames, student numbers, handles, or contact details - use [Student A], [Faculty Member], etc.
 - No guilt labels or calls for punishment; describe behavior objectively.
@@ -131,7 +140,7 @@ export async function buildReportDraft(messages, { useLlm = true } = {}) {
   if (userText.trim().length < 10) return null;
 
   if (useLlm) {
-    const transcript = history.map((m) => `${m.role === 'user' ? 'Student' : 'Adviser'}: ${m.role === 'user' ? scrubText(m.content).text : m.content}`).join('\n');
+    const transcript = history.map((m) => `${m.role === 'user' ? 'Student' : ADVISER_NAME}:${m.role === 'user' ? scrubText(m.content).text : m.content}`).join('\n');
     const draft = await callLlm({
       system: DRAFT_SYSTEM,
       messages: [{ role: 'user', content: `<conversation>\n${transcript}\n</conversation>` }],

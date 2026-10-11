@@ -1,4 +1,4 @@
-// Offline C.A.R.E. Adviser: keyword/intent engine used when Claude is unavailable, and for the
+// Offline Kali (the C.A.R.E. Adviser): keyword/intent engine used when Claude is unavailable, and for the
 // quick-reply suggestions shown under every reply. Deterministic, English + Taglish, safety first.
 //
 // A reply is { reply, crisis, intent, offer, suggestions }:
@@ -188,9 +188,9 @@ const INTENTS = [
   },
   {
     id: 'about_bot',
-    re: /\b(are you (?:a )?(?:bot|robot|ai|real|human)|who are you|what are you|ano ka|sino ka)\b/i,
+    re: /\b(are you (?:a )?(?:bot|robot|ai|real|human)|who are you|what are you|ano ka|sino ka|what(?:'?s| is) your name|ano(?:ng)? pangalan mo|kali(?:nga)? mean\w*|meaning of kali(?:nga)?|ibig sabihin ng kali(?:nga)?|why (?:are you|is your name) (?:called )?kali)\b/i,
     replies: [
-      "I'm the C.A.R.E. Adviser, a support assistant here to listen, help you calm down, think through what to do, and report things safely. I'm not a counselor or a therapist, but I can connect you to the people who are.",
+      "I'm Kali, your C.A.R.E. Adviser. My name is short for \"Kalinga\", which means care, and that's what I'm here for: to listen, help you calm down, think through what to do, and report things safely. I'm an AI, not a counselor or a therapist, but I can connect you to the people who are.",
     ],
   },
 
@@ -212,7 +212,7 @@ const INTENTS = [
   },
   {
     id: 'greeting',
-    re: /^(?:hi+|hello+|hey+|yo|good (?:morning|afternoon|evening)|kumusta|musta|hello po|hi po)\b[\s!.?]*$/i,
+    re: /^(?:hi+|hello+|hey+|yo|good (?:morning|afternoon|evening)|kumusta|musta|hello po|hi po)(?:,?\s+(?:po\s+)?kali)?\b[\s!.?]*$/i,
     replies: [
       "Hi! I'm glad you're here. How are you feeling today?",
       "Hey! What's on your mind? You can tell me as much or as little as you want.",

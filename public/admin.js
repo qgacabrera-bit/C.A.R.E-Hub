@@ -199,7 +199,7 @@ function renderClusters(clusters) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Resolution article editor: write it yourself, or give the AI context and edit its draft. Either
+// Resolution article editor: write it yourself, or give Kali context and edit her draft. Either
 // way the counselor reviews the final text before it is published to the student feed.
 // ---------------------------------------------------------------------------------------------
 const CONTEXT_MIN = 40;
@@ -238,9 +238,9 @@ function openArticleEditor(c, opener) {
     el('input', { type: 'radio', name: 'article-mode', value }),
     el('span', {}, el('strong', { text: title }), el('span', { class: 'small muted', text: desc })));
   const modeSelf = choice('self', 'Write it myself', 'Start from a blank article.');
-  const modeAi = choice('ai', 'Draft with AI', aiDrafting
-    ? 'Give the AI context about what was done, then review and edit its draft.'
-    : 'The AI is offline right now, so your context is filled into a template you can edit.');
+  const modeAi = choice('ai', 'Draft with Kali', aiDrafting
+    ? 'Give Kali context about what was done, then review and edit her draft.'
+    : 'Kali is offline right now, so your context is filled into a template you can edit.');
 
   const context = el('textarea', { rows: '4', maxlength: '2000', 'aria-describedby': 'article-context-hint' });
   context.value = a.context ?? '';
@@ -249,7 +249,7 @@ function openArticleEditor(c, opener) {
   const aiMsg = el('p', { class: 'small', role: 'status' });
   const aiPanel = el('div', { class: 'stack article-ai', hidden: true },
     labeled('Context for the draft (required)', context),
-    el('p', { class: 'hint', id: 'article-context-hint', text: 'What was done, what changed, and what students should know. The AI only uses what you write here plus the incident facts. Names and contact details are removed before anything is sent to the AI.' }),
+    el('p', { class: 'hint', id: 'article-context-hint', text: 'What was done, what changed, and what students should know. Kali only uses what you write here plus the incident facts. Names and contact details are removed before anything is sent to her.' }),
     el('div', { class: 'article-ai-row' }, contextCount, generate),
     aiMsg);
 
@@ -259,7 +259,7 @@ function openArticleEditor(c, opener) {
   headline.value = a.headline ?? '';
   summary.value = a.summary ?? '';
   body.value = a.body ?? '';
-  const aiNote = el('p', { class: 'alert article-ai-note', text: 'AI draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing.' });
+  const aiNote = el('p', { class: 'alert article-ai-note', text: "Kali's draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing." });
   const preview = el('div', { class: 'article-preview' });
   const previewBox = el('details', { class: 'article-preview-box' }, el('summary', {}, 'Preview as students will see it'), preview);
   previewBox.addEventListener('toggle', () => previewBox.open && renderPreview());
@@ -309,7 +309,7 @@ function openArticleEditor(c, opener) {
     aiNote.hidden = !(source === 'ai' || source === 'template');
     aiNote.textContent = source === 'template'
       ? 'Template draft: it was filled in from your context. Rewrite it in your own words and check every fact before publishing.'
-      : 'AI draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing.';
+      : "Kali's draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing.";
   }
   function updateCount() {
     const n = context.value.trim().length;
@@ -343,14 +343,14 @@ function openArticleEditor(c, opener) {
     if ((headline.value || summary.value || body.value) && !confirm('Replace the current headline, summary and article with a new draft?')) return;
     generate.disabled = true;
     errors.hidden = true;
-    aiMsg.textContent = 'Drafting...';
+    aiMsg.textContent = 'Kali is drafting the article...';
     try {
       const d = await call(`/api/admin/clusters/${c.id}/article/draft`, { method: 'POST', body: { context: context.value } });
       headline.value = d.headline;
       summary.value = d.summary;
       body.value = d.body;
       source = d.source;
-      aiMsg.textContent = d.source === 'ai' ? 'Draft ready. Review it below.' : 'The AI was unavailable, so a template was filled in from your context. Review it below.';
+      aiMsg.textContent = d.source === 'ai' ? 'Draft ready. Review it below.' : 'Kali was unavailable, so a template was filled in from your context. Review it below.';
       if (d.issues.length) showErrors('The draft needs changes before it can be published:', d.issues);
       changed();
       showMode('ai');

@@ -152,7 +152,7 @@ function followUpFor(post) {
     case 'pending_moderation':
       return 'Held for moderation before publishing.';
     case 'withheld':
-      return 'Not published after moderation review. You can still talk to the C.A.R.E. Adviser or your Guidance Office.';
+      return 'Not published after moderation review. You can still talk to Kali, the C.A.R.E. Adviser, or your Guidance Office.';
     default:
       return '';
   }
@@ -343,7 +343,7 @@ export function publicRouter(db) {
   r.post('/adviser/draft', chatLimiter, async (req, res, next) => {
     try {
       const draft = await buildReportDraft(req.body?.messages);
-      if (!draft) throw new UserError('Tell the Adviser a bit more about what happened first.');
+      if (!draft) throw new UserError('Tell Kali a bit more about what happened first.');
       res.json(draft);
     } catch (err) {
       next(err);
