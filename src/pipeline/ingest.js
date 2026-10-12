@@ -212,17 +212,25 @@ function stripPngMetadata(buf) {
   return Buffer.concat(out);
 }
 
-export function parseAttachment(dataUrl) {
+// `label` names the file in error messages ("Attachment", or "Picture" for article pictures).
+export function parseAttachment(dataUrl, { label = 'Attachment' } = {}) {
   if (!dataUrl) return null;
   const m = /^data:(image\/jpeg|image\/png);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
-  if (!m) throw new UserError('Attachments must be a JPEG or PNG image.');
+  if (!m) throw new UserError(`${label}s must be a JPEG or PNG image.`);
   const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > MAX_ATTACHMENT_BYTES) throw new UserError('Attachment is larger than 2 MB.');
+  if (buf.length > MAX_ATTACHMENT_BYTES) throw new UserError(`${label} is larger than 2 MB.`);
   try {
-    return { mime: m[1], data: m[1] === 'image/jpeg' ? stripJpegMetadata(buf) : stripPngMetadata(buf) };
+    return { mime: m[1], data: stripImageMetadata(m[1], buf) };
   } catch {
-    throw new UserError('Attachment could not be read as a valid image.');
+    throw new UserError(`${label} could not be read as a valid image.`);
   }
+}
+
+/** Remove EXIF/XMP/text metadata from a JPEG or PNG buffer. Throws on anything else. */
+export function stripImageMetadata(mime, buf) {
+  if (mime === 'image/jpeg') return stripJpegMetadata(buf);
+  if (mime === 'image/png') return stripPngMetadata(buf);
+  throw new Error(`Unsupported image type ${mime}`);
 }
 
 export class UserError extends Error {

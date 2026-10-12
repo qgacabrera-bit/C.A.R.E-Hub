@@ -40,6 +40,10 @@ export const config = {
   geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
   // Used when the main model is overloaded (HTTP 503). Set GEMINI_FALLBACK_MODEL= (empty) to disable.
   geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? 'gemini-flash-lite-latest',
+  // Article pictures Kali generates. Only Gemini makes images, so this needs a Gemini key even when
+  // Claude handles the chat. The fallback is tried when the main image model is unavailable.
+  geminiImageModel: process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
+  geminiImageFallbackModel: process.env.GEMINI_IMAGE_FALLBACK_MODEL ?? 'gemini-2.5-flash-image',
   anthropicModel: 'claude-opus-5-5',
 
   // Raw narratives are purged once sanitization finishes (privacy-first default).

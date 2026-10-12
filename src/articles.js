@@ -20,6 +20,56 @@ export const STUDENT_GUIDANCE = {
 export const DEFAULT_GUIDANCE = 'If this affects you, you can speak privately with a counselor through the C.A.R.E. Adviser or visit the guidance office.';
 export const CRISIS_LINE = 'If you or someone else is in danger right now, call 911. For emotional support at any time, the NCMH crisis line is 1553.';
 
+// ---- Byline -----------------------------------------------------------------------------------
+// Counselors sign in with a shared passcode, so the name comes from the article form.
+export const AUTHOR_NAME_MAX = 60;
+export const BYLINE_STYLES = ['counselor', 'kali_led', 'counselor_led'];
+
+/** Tidy a counselor's display name; '' when it is not a plausible name. */
+export function cleanAuthorName(name) {
+  const n = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, AUTHOR_NAME_MAX);
+  return /^[\p{L}][\p{L}\p{M} .,'-]*$/u.test(n) && n.length >= 2 ? n : '';
+}
+
+/**
+ * Which byline an article gets. Written by hand: the counselor. Drafted by Kali: Kali with the
+ * counselor's guidance, or the counselor with Kali's help (their choice). The offline template is
+ * only a starting point, so the counselor leads.
+ */
+export function bylineStyleFor(source, requested) {
+  if (source === 'counselor') return 'counselor';
+  if (source === 'template') return 'counselor_led';
+  return requested === 'counselor_led' ? 'counselor_led' : 'kali_led';
+}
+
+export function bylineText({ author_name: name, byline_style: style }) {
+  if (!name) return 'Reviewed and published by student welfare services'; // articles saved before bylines existed
+  if (style === 'kali_led') return `Written by Kali, with the guidance of ${name}`;
+  if (style === 'counselor_led') return `Written by ${name}, with the help of Kali`;
+  return `Written by ${name}`;
+}
+
+// ---- Picture ----------------------------------------------------------------------------------
+// Preset illustrations (icon names match the student page's sprite, i-<name>). Each topic has a default.
+export const PICTURE_PRESETS = ['shield', 'users', 'chat', 'ear', 'heart', 'smile'];
+export const DEFAULT_PRESET = { Bullying: 'users', Cyberbullying: 'chat', 'Peer Pressure': 'ear', 'Campus Safety': 'shield' };
+export const presetFor = (category, preset) => (PICTURE_PRESETS.includes(preset) ? preset : DEFAULT_PRESET[category] ?? 'shield');
+
+/**
+ * The prompt for a picture Kali generates. Only scrubbed, public article text is used, and the picture
+ * must never show people: an illustration of a place or symbol cannot point at a student.
+ */
+export function picturePrompt(incident, { headline = '', summary = '' } = {}) {
+  const about = scrubText(`${headline}. ${summary}`).text.slice(0, 500);
+  return [
+    'A warm, calm flat vector illustration for a school campus news update in the Philippines.',
+    `Topic: a ${incident.category.toLowerCase()} concern around the ${incident.location} that has now been resolved. The update says: "${about}"`,
+    'Show the place or a simple symbolic scene (for example a tidy hallway, a repaired fixture, an open door, a sunrise over a school building, or speech bubbles and a heart).',
+    'Soft rounded shapes, gentle and hopeful mood, muted palette of slate blue (#3E5468), sage green (#A8C9A4) and cream (#F6F2EA).',
+    'Strictly no people, faces, bodies, silhouettes or hands. No text, letters, numbers, logos, signs with writing or school names.',
+  ].join('\n');
+}
+
 /** Article body text -> paragraphs (blank-line separated). */
 export const toParagraphs = (body) => String(body ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 
@@ -60,7 +110,7 @@ const ARTICLE_SCHEMA = {
   additionalProperties: false,
 };
 
-const ARTICLE_SYSTEM = `You write short campus-update articles for C.A.R.E. Hub, a school's anonymous student support platform. A counselor has resolved a recurring concern that students reported and needs a public article explaining it to students.
+const ARTICLE_SYSTEM = `You are Kali, the C.A.R.E. Adviser, writing a short campus-update article for C.A.R.E. Hub, a school's anonymous student support platform. A counselor has resolved a recurring concern that students reported and needs a public article explaining it to students.
 Rules:
 - Use only the facts in <incident> and <counselor_context>. Never invent actions, dates, numbers, people, quotes or outcomes. If something is not given, leave it out.
 - Never name or hint at any individual: no names, sections, initials, handles, or descriptions that could identify someone. Say "students" or "staff".

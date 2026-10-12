@@ -205,11 +205,67 @@ function renderClusters(clusters) {
 const CONTEXT_MIN = 40;
 let fieldSeq = 0;
 
+// Preset article pictures: the same line icons the student page draws (its sprite's i-<name>).
+const PRESET_PICTURES = {
+  shield: ['Safety', '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
+  users: ['Together', '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'],
+  chat: ['Talking it out', '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>'],
+  ear: ['Listening', '<path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>'],
+  heart: ['Support', '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>'],
+  smile: ['Wellbeing', '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/>'],
+};
+const DEFAULT_PRESET = { Bullying: 'users', Cyberbullying: 'chat', 'Peer Pressure': 'ear', 'Campus Safety': 'shield' };
+
+// The markup is the constant icon data above, never user input.
+function presetIcon(name, cls = 'icon') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', cls);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = PRESET_PICTURES[name]?.[1] ?? PRESET_PICTURES.shield[1];
+  return svg;
+}
+
+// Counselors share one passcode, so the byline name is typed in and remembered on this computer.
+const NAME_KEY = 'care.counselorName';
+function rememberedName() {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function rememberName(name) {
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* ignore */
+  }
+}
+
+// The saved picture needs the counselor's token, so it is fetched rather than linked.
+async function savedPictureUrl(clusterId) {
+  try {
+    const res = await fetch(`/api/admin/clusters/${clusterId}/article/picture`, { headers: { Authorization: `Bearer ${token}` } });
+    return res.ok ? URL.createObjectURL(await res.blob()) : null;
+  } catch {
+    return null;
+  }
+}
+
+const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('That file could not be read.'));
+  reader.readAsDataURL(file);
+});
+
 function labeled(text, control) {
   control.id ||= `article-field-${++fieldSeq}`;
   return el('div', {}, el('label', { class: 'field', for: control.id, text }), control);
 }
 let aiDrafting = false;
+let aiPictures = false;
 let articleModal = null;
 let articleOpener = null;
 let articleDirty = false;
@@ -260,6 +316,123 @@ function openArticleEditor(c, opener) {
   summary.value = a.summary ?? '';
   body.value = a.body ?? '';
   const aiNote = el('p', { class: 'alert article-ai-note', text: "Kali's draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing." });
+
+  // ---- Byline: who wrote it, and whether Kali helped ----
+  const authorName = el('input', { type: 'text', maxlength: '60', autocomplete: 'name', placeholder: 'e.g. Ms. Reyes', 'aria-describedby': 'article-byline-preview' });
+  authorName.value = a.author_name || rememberedName();
+  let bylineStyle = a.byline_style === 'counselor_led' ? 'counselor_led' : 'kali_led';
+  const bylineKali = el('option', { value: 'kali_led' });
+  const bylineCounselor = el('option', { value: 'counselor_led' });
+  const bylineSelect = el('select', { 'aria-label': 'Byline' }, bylineKali, bylineCounselor);
+  const bylineChoice = labeled('Kali helped write this. How should the byline read?', bylineSelect);
+  const bylinePreview = el('p', { class: 'hint', id: 'article-byline-preview' });
+  const who = () => authorName.value.trim() || 'your name';
+  const bylineFor = (style) => (source === 'counselor' ? `Written by ${who()}`
+    : style === 'counselor_led' || source === 'template' ? `Written by ${who()}, with the help of Kali`
+      : `Written by Kali, with the guidance of ${who()}`);
+  function renderByline() {
+    bylineChoice.hidden = source !== 'ai';
+    bylineSelect.value = bylineStyle;
+    bylineKali.textContent = bylineFor('kali_led');
+    bylineCounselor.textContent = bylineFor('counselor_led');
+    bylinePreview.textContent = `Students will see: "${bylineFor(bylineStyle)}"`;
+  }
+  authorName.addEventListener('input', () => {
+    renderByline();
+    changed();
+  });
+  bylineSelect.addEventListener('change', () => {
+    bylineStyle = bylineSelect.value;
+    renderByline();
+    changed();
+  });
+  const bylineSection = el('div', { class: 'stack article-byline' },
+    labeled('Your name (shown to students)', authorName), bylineChoice, bylinePreview);
+
+  // ---- Picture: Kali illustrates it (online), the counselor uploads one, or a preset illustration ----
+  let pictureKind = a.picture?.kind ?? 'preset';
+  let picturePreset = a.picture?.preset || DEFAULT_PRESET[c.incident_type] || 'shield';
+  let pictureSrc = null;       // preview URL for an uploaded or generated picture
+  let pendingPicture = null;   // what the next save sends; null keeps the saved picture
+  let pictureTouched = Boolean(c.article); // an existing article keeps its picture; a new one may be auto-illustrated
+  const pictureBox = el('div', { class: 'article-picture-preview', 'aria-live': 'polite' });
+  const pictureMsg = el('p', { class: 'small', role: 'status' });
+  const kaliPicture = el('button', { class: 'btn btn-sm btn-primary', type: 'button' }, 'Generate with Kali');
+  const fileInput = el('input', { type: 'file', accept: 'image/jpeg,image/png', hidden: true });
+  const uploadPicture = el('button', { class: 'btn btn-sm', type: 'button', onclick: () => fileInput.click() }, 'Upload a picture');
+  const presetButtons = Object.entries(PRESET_PICTURES).map(([name, [label]]) => {
+    const b = el('button', { class: 'preset-btn', type: 'button', title: label, 'aria-label': `Use the ${label} illustration` }, presetIcon(name));
+    b.addEventListener('click', () => {
+      setPicture('preset', { preset: name });
+      pendingPicture = { kind: 'preset', preset: name };
+    });
+    b.dataset.preset = name;
+    return b;
+  });
+  kaliPicture.hidden = !aiPictures;
+
+  function renderPicture() {
+    pictureBox.replaceChildren(pictureKind === 'preset' || !pictureSrc
+      ? el('div', { class: 'update-picture article-picture-art' }, presetIcon(picturePreset, 'icon update-picture-icon'), el('span', { class: 'update-picture-caption', text: c.location }))
+      : el('img', { src: pictureSrc, alt: pictureKind === 'ai' ? "Kali's illustration for this article" : 'Your uploaded picture' }));
+    presetButtons.forEach((b) => b.setAttribute('aria-pressed', String(pictureKind === 'preset' && b.dataset.preset === picturePreset)));
+    if (previewBox.open) renderPreview();
+  }
+  function setPicture(kind, { preset, src } = {}) {
+    pictureKind = kind;
+    if (preset) picturePreset = preset;
+    if (src !== undefined) pictureSrc = src;
+    pictureTouched = true;
+    pictureMsg.textContent = '';
+    renderPicture();
+    changed();
+  }
+
+  async function generatePicture() {
+    kaliPicture.disabled = true;
+    pictureMsg.textContent = 'Kali is illustrating the article…';
+    try {
+      const p = await call(`/api/admin/clusters/${c.id}/article/picture`, { method: 'POST', body: { headline: headline.value, summary: summary.value } });
+      setPicture('ai', { src: p.preview });
+      pendingPicture = { kind: 'ai', token: p.token };
+      pictureMsg.textContent = 'Kali made this picture. Check that it fits before publishing, or generate another.';
+    } catch (e) {
+      pictureMsg.textContent = e.message;
+      if (e.status === 409) { // pictures are off for now: fall back to upload / illustrations
+        aiPictures = false;
+        kaliPicture.hidden = true;
+      }
+    } finally {
+      kaliPicture.disabled = false;
+    }
+  }
+  kaliPicture.addEventListener('click', generatePicture);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png'].includes(file.type)) return void (pictureMsg.textContent = 'Choose a JPEG or PNG picture.');
+    if (file.size > 2 * 1024 * 1024) return void (pictureMsg.textContent = 'That picture is larger than 2 MB. Choose a smaller one.');
+    try {
+      const data = await readAsDataUrl(file);
+      setPicture('upload', { src: data });
+      pendingPicture = { kind: 'upload', data };
+    } catch (e) {
+      pictureMsg.textContent = e.message;
+    }
+  });
+
+  const pictureSection = el('fieldset', { class: 'article-picture stack' },
+    el('legend', { class: 'field', text: 'Picture' }),
+    el('p', { class: 'hint', text: aiPictures
+      ? 'Kali can illustrate the article, or you can upload a picture or pick an illustration. Never use a photo that shows students or anyone who could be recognized.'
+      : 'Kali can\'t make pictures right now, so upload a picture or pick an illustration. Never use a photo that shows students or anyone who could be recognized.' }),
+    el('div', { class: 'article-picture-row' }, pictureBox,
+      el('div', { class: 'stack' },
+        el('div', { class: 'article-picture-actions' }, kaliPicture, uploadPicture, fileInput),
+        el('div', { class: 'preset-row', role: 'group', 'aria-label': 'Illustrations' }, ...presetButtons))),
+    pictureMsg);
   const preview = el('div', { class: 'article-preview' });
   const previewBox = el('details', { class: 'article-preview-box' }, el('summary', {}, 'Preview as students will see it'), preview);
   previewBox.addEventListener('toggle', () => previewBox.open && renderPreview());
@@ -269,6 +442,8 @@ function openArticleEditor(c, opener) {
     labeled('Summary (shown on the carousel slide)', summary),
     labeled('Full article', body),
     el('p', { class: 'hint', id: 'article-body-hint', text: 'Leave a blank line between paragraphs.' }),
+    bylineSection,
+    pictureSection,
     previewBox);
 
   const reviewed = el('input', { type: 'checkbox' });
@@ -285,9 +460,11 @@ function openArticleEditor(c, opener) {
   function renderPreview() {
     const paragraphs = body.value.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
     preview.replaceChildren(
+      pictureBox.firstChild?.cloneNode(true) ?? null,
       el('div', { class: 'small muted', text: `Resolved · Campus update · ${hashtag(c.incident_type)}` }),
       el('h4', { class: 'article-preview-headline', text: headline.value || 'Headline' }),
       el('p', { class: 'article-preview-summary', text: summary.value || 'Summary' }),
+      el('p', { class: 'small muted', text: bylineFor(bylineStyle) }),
       ...paragraphs.map((p) => el('p', { text: p })),
     );
   }
@@ -310,6 +487,7 @@ function openArticleEditor(c, opener) {
     aiNote.textContent = source === 'template'
       ? 'Template draft: it was filled in from your context. Rewrite it in your own words and check every fact before publishing.'
       : "Kali's draft: check every fact against what actually happened, and edit anything that is wrong or missing before publishing.";
+    renderByline();
   }
   function updateCount() {
     const n = context.value.trim().length;
@@ -355,6 +533,8 @@ function openArticleEditor(c, opener) {
       changed();
       showMode('ai');
       headline.focus();
+      // Kali illustrates her own draft unless the counselor already picked a picture.
+      if (d.source === 'ai' && aiPictures && !pictureTouched) generatePicture();
     } catch (e) {
       aiMsg.textContent = '';
       showErrors(e.message);
@@ -369,10 +549,16 @@ function openArticleEditor(c, opener) {
     try {
       const res = await call(`/api/admin/clusters/${c.id}/article`, {
         method: 'PUT',
-        body: { headline: headline.value, summary: summary.value, body: body.value, context: context.value, source, publish: doPublish, reviewed: reviewed.checked },
+        body: {
+          headline: headline.value, summary: summary.value, body: body.value, context: context.value, source,
+          author_name: authorName.value, byline_style: bylineStyle, ...(pendingPicture && { picture: pendingPicture }),
+          publish: doPublish, reviewed: reviewed.checked,
+        },
       });
       c.article = res.article;
       articleDirty = false;
+      pendingPicture = null;
+      if (authorName.value.trim()) rememberName(authorName.value.trim());
       if (doPublish) {
         articleModal.close();
         alert('Published. Students will see this article in the campus updates.');
@@ -411,6 +597,15 @@ function openArticleEditor(c, opener) {
   const startMode = c.article ? (source === 'counselor' ? 'self' : 'ai') : null;
   if (startMode) (startMode === 'ai' ? modeAi : modeSelf).querySelector('input').checked = true;
   showMode(startMode);
+  renderPicture();
+  if (c.article && pictureKind !== 'preset') {
+    savedPictureUrl(c.id).then((url) => {
+      if (url && !pendingPicture) {
+        pictureSrc = url;
+        renderPicture();
+      }
+    });
+  }
   updateCount();
   setStatus();
   articleModal.showModal();
@@ -535,6 +730,7 @@ async function load() {
     const data = await call('/api/admin/overview');
     showDashboard(true);
     aiDrafting = Boolean(data.ai_drafting);
+    aiPictures = Boolean(data.ai_pictures);
     renderStats(data.stats);
     renderPriority(data.priority);
     renderClusters(data.clusters);

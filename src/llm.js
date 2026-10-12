@@ -150,6 +150,65 @@ async function callAnthropic({ system, messages, maxTokens, effort, schema }) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Pictures (Gemini only - Claude does not generate images)
+// ---------------------------------------------------------------------------------------------
+let picturesUnavailable = ''; // set when the key's plan allows no pictures at all (free tier: limit 0)
+
+export function imageStatus() {
+  if (config.llmMode === 'off') return { enabled: false, reason: 'CARE_LLM=off' };
+  if (!geminiKey()) return { enabled: false, reason: 'picture generation needs GEMINI_API_KEY' };
+  if (disabled.gemini) return { enabled: false, reason: disabled.gemini };
+  if (picturesUnavailable) return { enabled: false, reason: picturesUnavailable };
+  return { enabled: true, model: config.geminiImageModel };
+}
+
+/**
+ * Generate one picture. Returns { mime, data: Buffer } or null on any failure (callers fall back to
+ * an uploaded or preset picture).
+ */
+export async function generateImage({ prompt, aspectRatio = '4:3' }) {
+  if (!imageStatus().enabled) return null;
+  geminiClient ??= new GoogleGenAI({ apiKey: geminiKey() });
+  const models = [...new Set([config.geminiImageModel, config.geminiImageFallbackModel].filter(Boolean))];
+  let noQuota = 0;
+  for (const model of models) {
+    try {
+      const response = await geminiClient.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseModalities: ['IMAGE'],
+          imageConfig: { aspectRatio },
+          abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      });
+      const part = response.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+      if (part) return { mime: part.inlineData.mimeType || 'image/png', data: Buffer.from(part.inlineData.data, 'base64') };
+      console.warn('[llm] Gemini returned no picture (%s) with %s', response.candidates?.[0]?.finishReason ?? response.promptFeedback?.blockReason ?? 'no image', model);
+      return null; // a refusal or empty answer will not change on the fallback model
+    } catch (error) {
+      if (error instanceof GeminiApiError && (error.status === 404 || GEMINI_BUSY.has(error.status))) {
+        console.warn('[llm] picture model "%s" unavailable (%s)%s', model, error.status, model === models.at(-1) ? '' : ' - trying the fallback');
+        continue;
+      }
+      if (error instanceof GeminiApiError && error.status === 429) {
+        // Image models have their own quota; Google's free tier allows none ("limit: 0").
+        if (/limit: 0\b/.test(error.message)) noQuota += 1;
+        console.warn('[llm] picture quota reached for "%s"%s', model, /limit: 0\b/.test(error.message) ? ' (this plan allows no pictures)' : '');
+        continue;
+      }
+      console.warn('[llm] picture generation failed: %s', error?.message ?? error);
+      return null;
+    }
+  }
+  if (noQuota === models.length) {
+    picturesUnavailable = 'the Gemini plan for this key does not include picture generation (enable billing on the Google project)';
+    console.warn('[llm] %s - counselors will upload pictures or use illustrations instead', picturesUnavailable);
+  }
+  return null;
+}
+
 /**
  * Call the configured model once. Returns the text (or parsed JSON when `schema` is given), or null
  * on any failure. `effort` only applies to Claude; Gemini uses its defaults.

@@ -2,10 +2,10 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { config } from '../config.js';
 import { severityLabel } from '../pipeline/severity.js';
-import { UserError } from '../pipeline/ingest.js';
+import { UserError, parseAttachment, stripImageMetadata } from '../pipeline/ingest.js';
 import { rateLimit } from './rateLimit.js';
-import { LIMITS, articleIssues, draftArticle } from '../articles.js';
-import { llmStatus } from '../llm.js';
+import { LIMITS, articleIssues, draftArticle, cleanAuthorName, bylineStyleFor, bylineText, presetFor, picturePrompt } from '../articles.js';
+import { llmStatus, imageStatus, generateImage } from '../llm.js';
 
 // Counselor portal. Report content is read-only here: counselors can move a cluster through its
 // review workflow and make publish/withhold moderation decisions, but cannot edit narratives, see
@@ -73,7 +73,23 @@ const shapeArticle = (a) => ({
   status: a.status,
   updated_at: a.updated_at,
   published_at: a.published_at,
+  author_name: a.author_name,
+  byline_style: a.byline_style,
+  byline: bylineText(a),
+  picture: { kind: a.picture_kind, preset: a.picture_preset },
 });
+
+// Pictures Kali generated, held until the counselor saves the article (or for 30 minutes). Saving
+// refers to one by token, so only a picture this server generated can be labelled as Kali's.
+const PICTURE_TTL = 30 * 60 * 1000;
+const generatedPictures = new Map(); // token -> { clusterId, mime, data, expires }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [t, p] of generatedPictures) if (p.expires < now) generatedPictures.delete(t);
+}, 5 * 60 * 1000).unref();
+
+const dataUrl = (mime, data) => `data:${mime};base64,${Buffer.from(data).toString('base64')}`;
 
 export function adminRouter(db) {
   const r = express.Router();
@@ -190,7 +206,7 @@ export function adminRouter(db) {
         status: p.status, private_report: p.visibility === 'private', cluster_id: p.cluster_id, created_at: p.created_at,
       }));
 
-    res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports, ai_drafting: llmStatus().enabled });
+    res.json({ stats, priority, moderation, clusters, hotspots, escalations, allReports, ai_drafting: llmStatus().enabled, ai_pictures: imageStatus().enabled });
   });
 
   r.patch('/clusters/:id', async (req, res, next) => {
@@ -235,6 +251,55 @@ export function adminRouter(db) {
     }
   });
 
+  // Kali generates a picture for the article. Nothing is saved until the counselor saves the article.
+  r.post('/clusters/:id/article/picture', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, message: 'Too many pictures in a short time. Try again in a few minutes.' }), async (req, res, next) => {
+    try {
+      const incident = await loadIncident(req.params.id);
+      if (!imageStatus().enabled) throw new UserError('Kali can only make pictures when the Gemini AI is connected. Upload a picture or choose an illustration instead.', 409);
+      const picture = await generateImage({ prompt: picturePrompt(incident, { headline: text(req.body?.headline, 200), summary: text(req.body?.summary, 500) }) });
+      if (!picture && !imageStatus().enabled) throw new UserError("Kali can't make pictures on the school's current AI plan, so upload a picture or choose an illustration.", 409);
+      if (!picture) throw new UserError("Kali couldn't make a picture right now. Try again, or upload a picture or choose an illustration.", 424);
+      let data;
+      try {
+        data = stripImageMetadata(picture.mime, picture.data);
+      } catch {
+        throw new UserError("Kali's picture came back in a format we can't use. Try again, or choose another picture.", 424);
+      }
+      const token = crypto.randomBytes(16).toString('hex');
+      generatedPictures.set(token, { clusterId: incident.id, mime: picture.mime, data, expires: Date.now() + PICTURE_TTL });
+      res.json({ token, preview: dataUrl(picture.mime, data) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // The saved picture (draft or published), so the editor can show it. Students get theirs from /api/updates.
+  r.get('/clusters/:id/article/picture', async (req, res, next) => {
+    const a = await db.get('SELECT picture_mime, picture_data FROM incident_articles WHERE cluster_id = ?', [toId(req.params.id)]);
+    if (!a?.picture_data) return next(new UserError('No picture.', 404));
+    res.set({ 'Content-Type': a.picture_mime, 'Cache-Control': 'no-store' });
+    res.send(Buffer.from(a.picture_data));
+  });
+
+  /**
+   * The picture part of a save: { kind: 'preset', preset } | { kind: 'upload', data: dataUrl } |
+   * { kind: 'ai', token } | missing (keep what is saved). Returns column values, or null to keep.
+   */
+  function pictureFromBody(p, incident) {
+    if (!p) return null;
+    if (p.kind === 'upload') {
+      const file = parseAttachment(p.data, { label: 'Picture' });
+      if (!file) throw new UserError('Choose a picture to upload.');
+      return { picture_kind: 'upload', picture_preset: '', picture_mime: file.mime, picture_data: file.data };
+    }
+    if (p.kind === 'ai') {
+      const g = generatedPictures.get(String(p.token ?? ''));
+      if (!g || g.clusterId !== incident.id || g.expires < Date.now()) throw new UserError("Kali's picture expired. Generate it again before saving.", 410);
+      return { picture_kind: 'ai', picture_preset: '', picture_mime: g.mime, picture_data: g.data, token: p.token };
+    }
+    return { picture_kind: 'preset', picture_preset: presetFor(incident.category, p.preset), picture_mime: null, picture_data: null };
+  }
+
   // Save a draft, or publish after review. Publishing needs a resolved incident, the counselor's review
   // confirmation, and a draft that passes the identity / blame checks.
   r.put('/clusters/:id/article', async (req, res, next) => {
@@ -247,25 +312,37 @@ export function adminRouter(db) {
         body: text(b.body, LIMITS.body[1] + 1),
         context: text(b.context, LIMITS.context[1]),
         source: ['counselor', 'ai', 'template'].includes(b.source) ? b.source : 'counselor',
+        author_name: cleanAuthorName(b.author_name),
       };
+      article.byline_style = bylineStyleFor(article.source, b.byline_style);
+      if (String(b.author_name ?? '').trim() && !article.author_name) throw new UserError('Enter your name as students should see it, using letters only (for example "Ms. Reyes").');
+      const picture = pictureFromBody(b.picture, incident);
       const publish = b.publish === true;
       if (publish) {
         if (incident.status !== 'resolved') throw new UserError('Mark the recurring incident as resolved before publishing its article.', 409);
         if (b.reviewed !== true) throw new UserError('Confirm that you reviewed the article before publishing.');
         const issues = articleIssues(article);
+        if (!article.author_name) issues.unshift('Add your name for the byline.');
         if (issues.length) return res.status(422).json({ error: 'Fix these before publishing:', issues });
       } else if (!article.headline && !article.summary && !article.body) {
         throw new UserError('There is nothing to save yet.');
       }
 
       const now = new Date().toISOString();
-      await db.run(`INSERT INTO incident_articles (cluster_id, headline, summary, body, counselor_context, source, status, created_at, updated_at, published_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      // A new article without a picture choice starts with the topic's preset illustration.
+      const pic = picture ?? { picture_kind: 'preset', picture_preset: presetFor(incident.category), picture_mime: null, picture_data: null };
+      await db.run(`INSERT INTO incident_articles (cluster_id, headline, summary, body, counselor_context, source, status, created_at, updated_at, published_at,
+                                                   author_name, byline_style, picture_kind, picture_preset, picture_mime, picture_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (cluster_id) DO UPDATE SET headline = EXCLUDED.headline, summary = EXCLUDED.summary, body = EXCLUDED.body,
                       counselor_context = EXCLUDED.counselor_context, source = EXCLUDED.source, status = EXCLUDED.status,
-                      updated_at = EXCLUDED.updated_at, published_at = EXCLUDED.published_at`,
+                      updated_at = EXCLUDED.updated_at, published_at = EXCLUDED.published_at,
+                      author_name = EXCLUDED.author_name, byline_style = EXCLUDED.byline_style
+                      ${picture ? ', picture_kind = EXCLUDED.picture_kind, picture_preset = EXCLUDED.picture_preset, picture_mime = EXCLUDED.picture_mime, picture_data = EXCLUDED.picture_data' : ''}`,
       [incident.id, article.headline, article.summary, article.body, article.context, article.source,
-        publish ? 'published' : 'draft', now, now, publish ? now : null]);
+        publish ? 'published' : 'draft', now, now, publish ? now : null,
+        article.author_name, article.byline_style, pic.picture_kind, pic.picture_preset, pic.picture_mime, pic.picture_data]);
+      if (picture?.token) generatedPictures.delete(picture.token);
       res.json({ article: shapeArticle(await db.get('SELECT * FROM incident_articles WHERE cluster_id = ?', [incident.id])) });
     } catch (e) {
       next(e);

@@ -349,10 +349,17 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let stopUpdatesCarousel = () => {};
 let updateDialog = null;
 
-// The "photo" is an illustration of the topic and place; updates never carry real photos of students.
+// The "photo" is the counselor's picture or one Kali illustrated; otherwise an illustration of the
+// topic and place. Updates never carry real photos of students.
 function updatePicture(n, cls) {
+  if (n.picture_url) {
+    return el('div', { class: `update-picture update-picture-photo ${cls}`, 'aria-hidden': 'true' },
+      el('img', { src: n.picture_url, alt: '', loading: 'lazy', decoding: 'async' }),
+      n.picture_by_kali ? el('span', { class: 'update-picture-credit', text: 'Illustration by Kali' }) : null);
+  }
+  const icon = n.picture_preset ? `i-${n.picture_preset}` : UPDATE_ICONS[n.category] ?? 'i-shield';
   return el('div', { class: `update-picture ${cls}`, 'aria-hidden': 'true' },
-    svgIcon(UPDATE_ICONS[n.category] ?? 'i-shield', 'icon update-picture-icon'),
+    svgIcon(icon, 'icon update-picture-icon'),
     el('span', { class: 'update-picture-caption', text: n.location }));
 }
 

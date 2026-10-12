@@ -7,7 +7,7 @@ import { authorTokenFromSecret, displayHandle, submitPost, UserError } from '../
 import { scoreSeverity, severityLabel } from '../pipeline/severity.js';
 import { scrubText } from '../pipeline/scrubber.js';
 import { rateLimit } from './rateLimit.js';
-import { STUDENT_GUIDANCE, DEFAULT_GUIDANCE, CRISIS_LINE, toParagraphs } from '../articles.js';
+import { STUDENT_GUIDANCE, DEFAULT_GUIDANCE, CRISIS_LINE, toParagraphs, bylineText, presetFor } from '../articles.js';
 
 // Supportive reactions only (stored keys are stable; icons and wording live in the client). One per student per post.
 export const REACTIONS = {
@@ -53,12 +53,15 @@ const ADDRESSED = 'Addressed by student welfare services';
  * Counselor-reviewed articles about resolved recurring incidents. Shown for 30 days after publishing,
  * and only while the incident stays resolved (a new report reopens it and hides the article).
  */
+const VISIBLE_ARTICLE = `a.status = 'published' AND c.status = 'resolved' AND c.incident_type != 'Mental Health' AND a.published_at >= ?`;
+const articleWindowStart = () => new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+
 async function publishedArticles(db) {
-  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const rows = await db.all(`SELECT a.headline, a.summary, a.body, a.published_at, c.incident_type, c.location_tag
+  const rows = await db.all(`SELECT a.id, a.headline, a.summary, a.body, a.published_at, a.updated_at, a.author_name, a.byline_style,
+                                    a.picture_kind, a.picture_preset, c.incident_type, c.location_tag
                              FROM incident_articles a JOIN incident_clusters c ON c.id = a.cluster_id
-                             WHERE a.status = 'published' AND c.status = 'resolved' AND c.incident_type != 'Mental Health' AND a.published_at >= ?
-                             ORDER BY a.published_at DESC`, [since]);
+                             WHERE ${VISIBLE_ARTICLE}
+                             ORDER BY a.published_at DESC`, [articleWindowStart()]);
   return rows.map((a) => ({
     kind: 'article',
     category: a.incident_type,
@@ -69,7 +72,12 @@ async function publishedArticles(db) {
     summary: a.summary,
     text: a.summary,
     article: toParagraphs(a.body),
-    byline: 'Reviewed and published by student welfare services',
+    byline: bylineText(a),
+    // Uploaded or Kali-made pictures are served by URL (the version busts caches after an edit);
+    // otherwise the page draws the preset illustration.
+    picture_url: a.picture_kind === 'preset' ? null : `/api/updates/pictures/${a.id}?v=${encodeURIComponent(a.updated_at)}`,
+    picture_preset: a.picture_kind === 'preset' ? presetFor(a.incident_type, a.picture_preset) : null,
+    picture_by_kali: a.picture_kind === 'ai',
   }));
 }
 
@@ -176,6 +184,17 @@ export function publicRouter(db) {
 
   // `categories` is a comma-separated topic filter. The anonymous session (sent as a header so it
   // never lands in a URL) is only used to mark which reaction this student has given.
+  // Article pictures, only while the article itself is visible to students.
+  r.get('/updates/pictures/:id', async (req, res, next) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1 || id > 2147483647) return next(new UserError('Picture not found.', 404));
+    const a = await db.get(`SELECT a.picture_mime, a.picture_data FROM incident_articles a JOIN incident_clusters c ON c.id = a.cluster_id
+                            WHERE a.id = ? AND a.picture_data IS NOT NULL AND ${VISIBLE_ARTICLE}`, [id, articleWindowStart()]);
+    if (!a) return next(new UserError('Picture not found.', 404));
+    res.set({ 'Content-Type': a.picture_mime, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    res.send(Buffer.from(a.picture_data));
+  });
+
   r.get('/feed', async (req, res) => {
     const topics = String(req.query.categories ?? '').split(',').filter((c) => config.categories.includes(c));
     const viewer = authorTokenFromSecret(req.get('X-Anon-Session'));
