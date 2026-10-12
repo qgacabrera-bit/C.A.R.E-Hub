@@ -121,3 +121,10 @@ Student browser ──► POST /api/posts
 * **Campus contacts** in `src/config.js` marked "demo placeholder" must be replaced with real numbers.
 * **Admin auth** is a single shared passcode with in-memory sessions (sessions reset on restart), which is fine for a demo. Use real SSO for production.
 * **Offline name detection** is heuristic (capitalized spans plus a first-name list). Uncertain cases are held for moderation rather than published. Claude review catches more, especially nicknames.
+
+## License
+Copyright (c) 2026 EchoLogic. C.A.R.E. Hub is released under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+
+You may use, study, change and share it for any noncommercial purpose: personal and educational use, research, and use by schools, charities, public health and safety organizations and government institutions. You may not use it to make money (for example, selling it, or running it as a paid product or service) without a separate license from EchoLogic. If you share it, include the license and the `Required Notice` line from [LICENSE](LICENSE).
+
+Versions published before this change were released under the MIT License, and copies of those versions keep the MIT terms.
