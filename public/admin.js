@@ -1,4 +1,4 @@
-import { $, el, taggedText, timeAgo, sevBadge, hashtag, api } from './common.js';
+import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, confirmDialog, notify } from './common.js';
 
 const SEV_LABELS = ['', 'Low', 'Guarded', 'Moderate', 'High Priority', 'Critical'];
 let token = null;
@@ -134,7 +134,7 @@ async function openAttachment(postId) {
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   } catch (e) {
-    alert(e.message);
+    notify({ title: "Couldn't open the attachment", message: e.message, tone: 'error' });
   }
 }
 
@@ -170,7 +170,7 @@ function renderClusters(clusters) {
           if (c.status === 'resolved' && c.public_article_allowed && c.article?.status !== 'published') openArticleEditor(c, select);
           load();
         } catch (e) {
-          alert(e.message);
+          notify({ title: "Couldn't change the status", message: e.message, tone: 'error' });
           select.value = c.status;
         } finally {
           select.disabled = false;
@@ -270,12 +270,19 @@ let articleModal = null;
 let articleOpener = null;
 let articleDirty = false;
 
+const confirmDiscardArticle = () => confirmDialog({
+  title: 'Close without saving?', message: 'Your changes to this article will be lost.',
+  confirmLabel: 'Discard changes', cancelLabel: 'Keep editing', tone: 'danger',
+});
+
 function openArticleEditor(c, opener) {
   if (!articleModal) {
     articleModal = el('dialog', { class: 'report-modal article-modal', 'aria-labelledby': 'article-modal-title' });
     // Esc or the close button must not silently throw away an unsaved article.
-    articleModal.addEventListener('cancel', (e) => {
-      if (articleDirty && !confirm('Close without saving? Your changes to this article will be lost.')) e.preventDefault();
+    articleModal.addEventListener('cancel', async (e) => {
+      if (!articleDirty) return;
+      e.preventDefault();
+      if (await confirmDiscardArticle()) articleModal.close();
     });
     articleModal.addEventListener('close', () => {
       articleOpener?.isConnected && articleOpener.focus();
@@ -453,8 +460,8 @@ function openArticleEditor(c, opener) {
   const statusLine = el('p', { class: 'small muted article-status' });
   const save = el('button', { class: 'btn btn-sm', type: 'button' }, published ? 'Unpublish and save as draft' : 'Save draft');
   const publish = el('button', { class: 'btn btn-sm btn-primary', type: 'button' }, published ? 'Update published article' : 'Publish');
-  const cancel = el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => {
-    if (!articleDirty || confirm('Close without saving? Your changes to this article will be lost.')) articleModal.close();
+  const cancel = el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: async () => {
+    if (!articleDirty || await confirmDiscardArticle()) articleModal.close();
   } }, 'Close');
 
   function renderPreview() {
@@ -518,7 +525,10 @@ function openArticleEditor(c, opener) {
   }));
 
   generate.addEventListener('click', async () => {
-    if ((headline.value || summary.value || body.value) && !confirm('Replace the current headline, summary and article with a new draft?')) return;
+    if ((headline.value || summary.value || body.value) && !(await confirmDialog({
+      title: 'Replace your draft?', message: "Kali will write a new headline, summary and article, replacing what's there now.",
+      confirmLabel: 'Replace', cancelLabel: 'Keep mine', tone: 'warning',
+    }))) return;
     generate.disabled = true;
     errors.hidden = true;
     aiMsg.textContent = 'Kali is drafting the article...';
@@ -561,7 +571,7 @@ function openArticleEditor(c, opener) {
       if (authorName.value.trim()) rememberName(authorName.value.trim());
       if (doPublish) {
         articleModal.close();
-        alert('Published. Students will see this article in the campus updates.');
+        notify({ title: 'Article published', message: 'Students will see it in the campus updates.', tone: 'success', okLabel: 'Done' });
       } else {
         save.textContent = 'Save draft';
         publish.textContent = 'Publish';
@@ -637,7 +647,7 @@ function renderModeration(items) {
         await call(`/api/admin/posts/${p.id}/moderate`, { method: 'POST', body: { decision } });
         load();
       } catch (e) {
-        alert(e.message);
+        notify({ title: "Couldn't save that decision", message: e.message, tone: 'error' });
         btn.disabled = false;
       }
     };
@@ -739,7 +749,7 @@ async function load() {
     renderEscalations(data.escalations);
     renderAllReports(data.allReports ?? []);
   } catch (e) {
-    if (e.status !== 401) alert(`Could not load dashboard: ${e.message}`);
+    if (e.status !== 401) notify({ title: "Couldn't load the dashboard", message: e.message, tone: 'error' });
   }
 }
 

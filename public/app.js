@@ -1,4 +1,4 @@
-import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, storage } from './common.js';
+import { $, el, taggedText, timeAgo, sevBadge, hashtag, api, storage, confirmDialog, notify } from './common.js';
 
 const state = { meta: null, topics: new Set(), secret: null, handle: '', chat: [], view: 'feed',privateDraft: null, chatBusy: false };
 
@@ -54,7 +54,14 @@ async function loadIdentity() {
 }
 
 $('#reset-identity').addEventListener('click', async () => {
-  if (!confirm('Start a new anonymous identity? This browser will no longer see the status of your earlier reports. Counselors still keep them.')) return;
+  const fresh = await confirmDialog({
+    title: 'Start a new anonymous identity?',
+    message: 'This browser will no longer see the status of your earlier reports. Counselors still keep them.',
+    confirmLabel: 'Start fresh',
+    cancelLabel: 'Keep my identity',
+    tone: 'warning',
+  });
+  if (!fresh) return;
   state.secret = newSecret();
   storage.set('care.secret', state.secret);
   await loadIdentity();
@@ -525,8 +532,10 @@ function resetComposer() {
 }
 $('#composer-open').addEventListener('click', openComposer);
 $('#composer-close').addEventListener('click', collapseComposer); // keeps the draft
-$('#composer-discard').addEventListener('click', () => {
-  if ($('#narrative').value.trim() && !confirm('Discard this post?')) return;
+$('#composer-discard').addEventListener('click', async () => {
+  if ($('#narrative').value.trim() && !(await confirmDialog({
+    title: 'Discard this post?', message: "What you've written will be deleted.", confirmLabel: 'Discard', cancelLabel: 'Keep writing', tone: 'danger',
+  }))) return;
   resetComposer();
   collapseComposer();
 });
@@ -678,13 +687,18 @@ async function loadMine() {
         el('button', {
           class: 'btn btn-sm btn-ghost btn-danger', type: 'button',
           onclick: async (ev) => {
-            if (!confirm('Remove this post? This cannot be undone.')) return;
-            ev.currentTarget.disabled = true;
+            const btn = ev.currentTarget; // currentTarget is gone once we await
+            const remove = await confirmDialog({
+              title: 'Remove this post?', message: "It will be taken off the feed. This can't be undone.", confirmLabel: 'Remove post', cancelLabel: 'Keep it', tone: 'danger',
+            });
+            if (!remove) return;
+            btn.disabled = true;
             try {
               await api(`/api/my-posts/${p.id}/withdraw`, { method: 'POST', body: { secret: state.secret } });
               loadMine();
             } catch (e) {
-              alert(e.message);
+              btn.disabled = false;
+              notify({ title: "Couldn't remove the post", message: e.message, tone: 'error' });
             }
           },
         }, 'Remove post'),

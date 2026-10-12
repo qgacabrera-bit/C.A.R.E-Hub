@@ -87,3 +87,61 @@ export const storage = {
     }
   },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Site-styled confirm / notice dialogs, used instead of the browser's confirm() and alert().
+// ---------------------------------------------------------------------------------------------
+// Icon shapes are constant markup, never user text.
+const DIALOG_ICONS = {
+  warning: '<path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h.01"/>',
+  danger: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/><path d="M10 11v5M14 11v5"/>',
+  error: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>',
+  success: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+};
+let dialogSeq = 0;
+
+/**
+ * Ask the visitor to confirm something. Resolves true for the confirm button, false for Cancel,
+ * Esc or a click outside. `tone` sets the icon and button color: info | warning | danger | error | success.
+ * With `cancelLabel: null` it is a one-button notice (see notify()).
+ */
+export function confirmDialog({ title, message = '', confirmLabel = 'OK', cancelLabel = 'Cancel', tone = 'info' }) {
+  return new Promise((resolve) => {
+    const id = `care-dialog-${++dialogSeq}`;
+    const opener = document.activeElement;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('class', 'icon');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = DIALOG_ICONS[tone] ?? DIALOG_ICONS.info;
+
+    let answer = false;
+    const finish = (value) => {
+      answer = value;
+      dialog.close();
+    };
+    const ok = el('button', { class: `btn ${tone === 'danger' ? 'btn-danger-solid' : 'btn-primary'}`, type: 'button', onclick: () => finish(true) }, confirmLabel);
+    const cancel = cancelLabel ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => finish(false) }, cancelLabel) : null;
+    const dialog = el('dialog', { class: `care-dialog care-dialog-${tone}`, role: cancel ? 'alertdialog' : 'dialog', 'aria-labelledby': `${id}-title`, 'aria-describedby': message ? `${id}-text` : null },
+      el('div', { class: 'care-dialog-icon' }, icon),
+      el('h2', { class: 'care-dialog-title', id: `${id}-title`, text: title }),
+      message ? el('p', { class: 'care-dialog-text', id: `${id}-text`, text: message }) : null,
+      el('div', { class: 'care-dialog-actions' }, cancel, ok));
+
+    dialog.addEventListener('click', (e) => e.target === dialog && finish(false)); // backdrop
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      if (opener?.isConnected) opener.focus();
+      resolve(answer);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    // Destructive choices start on Cancel, so a stray Enter never deletes anything.
+    (tone === 'danger' && cancel ? cancel : ok).focus();
+  });
+}
+
+/** One-button notice: an error, a success message, or anything that needs acknowledging. */
+export const notify = ({ title, message, tone = 'info', okLabel = 'OK' }) =>
+  confirmDialog({ title, message, tone, confirmLabel: okLabel, cancelLabel: null });
